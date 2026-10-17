@@ -17,7 +17,7 @@ from core import Settings, now_cn, parse_time, SHANGHAI, RunResult
 from storage import Store, SingleInstance, app_dir, crypt, atomic_write
 from browser import BrowserRunner
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 
 
 class App:
@@ -81,6 +81,9 @@ class App:
         style.configure("TButton", padding=(15, 9), font=("Microsoft YaHei UI", 10))
         style.configure("Primary.TButton", background="#2466DA", foreground="white", borderwidth=0)
         style.map("Primary.TButton", background=[("active", "#1955BC"), ("disabled", "#B5C4DA")])
+        style.configure("Running.TButton", background="#D93025", foreground="white", borderwidth=0)
+        style.map("Running.TButton", background=[("disabled", "#C6423B"), ("pressed", "#A81F17"), ("active", "#B3261E")],
+                  foreground=[("disabled", "white")])
         style.configure("TEntry", padding=7, font=("Microsoft YaHei UI", 10))
         outer = ttk.Frame(self.root, padding=22)
         outer.pack(fill="both", expand=True)
@@ -148,6 +151,10 @@ class App:
     def set_awake(self, active):
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000001 if active else 0x80000000)
 
+    def update_schedule_button(self):
+        self.start_button.configure(text="定时已启动" if self.enabled else "开始定时",
+                                    style="Running.TButton" if self.enabled else "Primary.TButton")
+
     def save(self, quiet=False):
         if self.worker and self.worker.is_alive():
             if not quiet:
@@ -191,11 +198,13 @@ class App:
         self.store.save_settings(self.settings)
         self.next_attempt = None
         self.set_awake(True)
+        self.update_schedule_button()
         self.status.set("定时已启动")
         self.log(f"每天 {self.settings.start} 开始，失败后每 {self.settings.retry_minutes} 分钟重试，至 {self.settings.end} 截止。")
 
     def stop_schedule(self):
         self.enabled = False
+        self.update_schedule_button()
         self.stop_event.set()
         self.settings.auto_start = False
         try:
@@ -259,6 +268,9 @@ class App:
             self.next_attempt = now_cn() + timedelta(minutes=self.settings.retry_minutes)
         else:
             self.set_awake(False)
+
+        self.update_schedule_button()
+
     def tick(self):
         try:
             while True:

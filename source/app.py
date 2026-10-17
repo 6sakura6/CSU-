@@ -17,7 +17,37 @@ from core import Settings, now_cn, parse_time, SHANGHAI, RunResult
 from storage import Store, SingleInstance, app_dir, crypt, atomic_write
 from browser import BrowserRunner
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
+DISCLAIMER_TEXT = "本程序仅供学习和测试使用。\n\n请在下载后 24 小时内删除。"
+
+
+def show_disclaimer(root):
+    root.title("平安打卡助手 · 免责声明")
+    root.geometry("560x260")
+    root.resizable(False, False)
+    root.configure(bg="white")
+    accepted = tk.BooleanVar(root, value=False)
+    content = tk.Frame(root, bg="white", padx=28, pady=24)
+    content.pack(fill="both", expand=True)
+    tk.Label(content, text="免责声明", bg="white", fg="#153A76",
+             font=("Microsoft YaHei UI", 18, "bold")).pack(anchor="w")
+    tk.Label(content, text=DISCLAIMER_TEXT, bg="white", fg="#24344B",
+             font=("Microsoft YaHei UI", 11), wraplength=500,
+             justify="left").pack(anchor="w", pady=(15, 20))
+    actions = tk.Frame(content, bg="white")
+    actions.pack(fill="x", side="bottom")
+    tk.Button(actions, text="我已阅读并同意", command=lambda: accepted.set(True),
+              bg="#2466DA", fg="white", activebackground="#1955BC", activeforeground="white",
+              relief="flat", padx=16, pady=9, font=("Microsoft YaHei UI", 10)).pack(side="right")
+    tk.Button(actions, text="退出程序", command=lambda: accepted.set(False),
+              bg="#EDF1F7", fg="#24344B", activebackground="#DFE6F0",
+              relief="flat", padx=16, pady=9, font=("Microsoft YaHei UI", 10)).pack(side="right", padx=(0, 10))
+    root.protocol("WM_DELETE_WINDOW", lambda: accepted.set(False))
+    root.wait_variable(accepted)
+    result = accepted.get()
+    content.destroy()
+    root.resizable(True, True)
+    return result
 
 
 class App:
@@ -357,6 +387,9 @@ def main():
     if "--self-test" in sys.argv:
         return self_test()
     root = tk.Tk()
+    if not show_disclaimer(root):
+        root.destroy()
+        return 0
     try:
         App(root)
     except Exception as error:

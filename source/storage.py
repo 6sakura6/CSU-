@@ -8,7 +8,7 @@ import hashlib
 import json
 import os
 import sys
-from core import Settings
+from core import Settings, ManualLocation
 
 
 def app_dir() -> Path:
@@ -68,6 +68,16 @@ class Store:
 
     def credentials(self):
         return self.load_secret("credentials.dat")
+
+    def manual_location(self):
+        saved = self.load_secret("location.dat")
+        if saved is None:
+            return None
+        return ManualLocation.from_inputs(saved["latitude"], saved["longitude"])
+
+    def save_manual_location(self, location: ManualLocation):
+        checked = ManualLocation.from_inputs(location.latitude, location.longitude)
+        self.save_secret("location.dat", {"latitude": checked.latitude, "longitude": checked.longitude})
 
     def save_credentials(self, username, password):
         if not username.strip() or not password:

@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import (Settings, PunchStatus, SHANGHAI, server_batch, now_cn, AppError,
-                  Cancelled, find_punch_menu, resolve_menu_url)
+                  Cancelled, find_punch_menu, resolve_menu_url, ManualLocation, parse_coordinate)
 from storage import Store, crypt, SingleInstance
 from browser import BrowserRunner, safe_login_url, valid_location
 
@@ -69,6 +69,26 @@ class CoreTests(unittest.TestCase):
         self.assertIsNotNone(PunchStatus.from_fresh_url(url, '/new/check-in'))
         self.assertIsNone(PunchStatus.from_fresh_url(url, '/old/check-in'))
 
+    def test_coordinate_formats_and_hemispheres(self):
+        for value in ('30.2584722222', '30°15′30.5″', '北纬30度15分30.5秒', 'N30°15\'30.5"', '30°15\'30.5"N'):
+            self.assertAlmostEqual(parse_coordinate(value, 'lat'), 30 + 15/60 + 30.5/3600)
+        self.assertAlmostEqual(parse_coordinate('南纬30°15′30.5″', 'lat'), -(30 + 15/60 + 30.5/3600))
+        self.assertAlmostEqual(parse_coordinate('120°30′30″W', 'lng'), -(120 + 30/60 + 30/3600))
+        self.assertAlmostEqual(parse_coordinate('-0°30′0″', 'lat'), -0.5)
+        self.assertEqual(parse_coordinate('180°0′0″E', 'lng'), 180)
+
+    def test_coordinate_invalid_values_are_rejected(self):
+        for value, axis in [('', 'lat'), ('NaN', 'lat'), ('inf', 'lat'), ('1e2', 'lat'), ('91', 'lat'),
+                            ('181', 'lng'), ('30°60′0″', 'lat'), ('30°0′60″', 'lat'),
+                            ('180°0′1″', 'lng'), ('E30', 'lat'), ('N120', 'lng'), ('-30N', 'lat'),
+                            ('N30N', 'lat'), ('30,120', 'lat')]:
+            with self.subTest(value=value, axis=axis), self.assertRaises(ValueError):
+                parse_coordinate(value, axis)
+        with self.assertRaises(ValueError):
+            ManualLocation.from_inputs('0', '0')
+        with self.assertRaises(ValueError):
+            Settings(location_mode='unknown').validate()
+
 
 class StorageTests(unittest.TestCase):
     def setUp(self):
@@ -105,10 +125,49 @@ class StorageTests(unittest.TestCase):
         finally:
             instance.close()
 
+    def test_manual_location_is_encrypted_and_round_trips(self):
+        location = ManualLocation.from_inputs('30°15′30″', '120°30′30″')
+        self.store.save_manual_location(location)
+        self.assertEqual(self.store.manual_location(), location)
+        raw = (self.store.root / 'location.dat').read_bytes()
+        self.assertNotIn(b'latitude', raw)
+        self.assertNotIn(b'30.258', raw)
+        self.store.save_settings(Settings(location_mode='manual'))
+        self.assertEqual(self.store.settings().location_mode, 'manual')
+        self.assertNotIn(b'latitude', (self.store.root / 'settings.json').read_bytes())
+
+    def test_legacy_settings_keep_device_location(self):
+        self.assertIsNone(self.store.manual_location())
+        (self.store.root / 'settings.json').write_text('{"start":"21:00","auto_start":false}', encoding='utf-8')
+        self.assertEqual(self.store.settings().location_mode, 'device')
+
 
 FIXTURE = """<!doctype html><html lang='zh-CN'><meta charset='utf-8'><body><div id='app'></div><script>
 const app = document.querySelector('#app');
 const target = __TARGET_ROUTE__;
+const useGeo = __USE_GEO__;
+if (useGeo) {
+  window.BMapGL = {};
+  window.BMapGL.Geolocation = class {
+    getCurrentPosition(callback) { callback({point:{lat:40,lng:116}}); }
+    getStatus() { return 0; }
+  };
+  window.BMapGL.Geocoder = class { marker() { return 'geocoder-unchanged'; } };
+}
+const readGps = () => new Promise(resolve => {
+  const locator = new BMapGL.Geolocation();
+  locator.getCurrentPosition(result => {
+    if (locator.getStatus() === 0 && result) {
+      window.geoSource = 'bmap';
+      resolve({latitude:result.point.lat,longitude:result.point.lng});
+    } else {
+      navigator.geolocation.getCurrentPosition(position => {
+        window.geoSource = 'gps';
+        resolve(position.coords);
+      }, () => resolve(null), {timeout:3000});
+    }
+  });
+});
 const openPunch = async () => {
   const r = await fetch('/gw/qxj/qxj-padkglxx/queryKqDkbc', {method:'POST'});
   const b = (await r.json()).data;
@@ -117,9 +176,21 @@ const openPunch = async () => {
   app.innerHTML = b.sfydk ? '<p>今日已打卡</p>' : '<button id="punch">立即打卡</button>';
   app.__vue__ = {handlePunch(){}, submitPadk(){}, latitude:30, longitude:110,
                 locationName:'离线测试地点', canPunch:!b.outside, locating:false, $children:[]};
+  if (useGeo && !b.sfydk) {
+    app.__vue__.latitude = app.__vue__.longitude = 0;
+    app.__vue__.locating = true;
+    const position = await readGps();
+    // A deterministic fixture transform checks that the app's transform is preserved.
+    if (position) {
+      app.__vue__.latitude = position.latitude + 0.002;
+      app.__vue__.longitude = position.longitude + 0.004;
+    }
+    app.__vue__.locating = false;
+  }
   const button = document.querySelector('#punch');
   if(button) button.onclick = async () => {
-    await fetch('/gw/qxj/qxj-padkglxx/xspadk', {method:'POST'});
+    await fetch('/gw/qxj/qxj-padkglxx/xspadk', {method:'POST',
+      body:JSON.stringify({jd:app.__vue__.longitude,wd:app.__vue__.latitude})});
     app.innerHTML = '<p>打卡成功</p>';
   };
 };
@@ -157,7 +228,7 @@ class BrowserIntegrationTests(unittest.TestCase):
         self.context = self.browser.new_context(**self.playwright.devices['Pixel 7'])
         self.state = {"submitted": 0, "queried": 0, "already": False, "reject": False, "outside": False,
                       "old": False, "unavailable": False, "menu_queried":0, "menu_missing":False,
-                      "route":"/ywViews/qxjlfx/dk/index"}
+                      "route":"/ywViews/qxjlfx/dk/index", "use_geo":False, "submitted_location":None}
         def route(request_route):
             url = request_route.request.url
             if url.endswith('/getUniServiceMenu'):
@@ -174,11 +245,13 @@ class BrowserIntegrationTests(unittest.TestCase):
                 request_route.fulfill(json={"code": 200, "data": batch})
             elif url.endswith('/xspadk'):
                 self.state['submitted'] += 1
+                self.state['submitted_location'] = request_route.request.post_data_json
                 if not self.state['reject']:
                     self.state['already'] = True
                 request_route.fulfill(json={"code": 400 if self.state['reject'] else 200})
             elif url.startswith('https://zhxg.csu.edu.cn/znzhxgpt_h5/'):
-                request_route.fulfill(body=FIXTURE.replace('__TARGET_ROUTE__',json.dumps(self.state['route'])), content_type='text/html; charset=utf-8')
+                html = FIXTURE.replace('__TARGET_ROUTE__',json.dumps(self.state['route'])).replace('__USE_GEO__',json.dumps(self.state['use_geo']))
+                request_route.fulfill(body=html, content_type='text/html; charset=utf-8')
             else:
                 request_route.abort()  # No real network traffic in this test suite.
         self.context.route('**/*', route)
@@ -228,6 +301,57 @@ class BrowserIntegrationTests(unittest.TestCase):
         result = self.runner.perform(self.context, True)
         self.assertEqual(result.code, 'checked')
         self.assertEqual(self.state['submitted'], 0)
+
+    def enable_manual_location(self):
+        location = ManualLocation.from_inputs('30°15′30″', '120°30′30″')
+        self.store.save_manual_location(location)
+        self.runner.settings.location_mode = 'manual'
+        self.state['use_geo'] = True
+        return location
+
+    def test_manual_location_reaches_submission_via_gps_fallback(self):
+        location = self.enable_manual_location()
+        result = self.runner.perform(self.context, False)
+        self.assertTrue(result.completed)
+        self.assertEqual(self.state['submitted'], 1)
+        self.assertAlmostEqual(self.state['submitted_location']['wd'], location.latitude + 0.002)
+        self.assertAlmostEqual(self.state['submitted_location']['jd'], location.longitude + 0.004)
+        self.assertEqual(self.context.pages[0].evaluate('window.geoSource'), 'gps')
+        self.assertEqual(self.context.pages[0].evaluate('new BMapGL.Geocoder().marker()'), 'geocoder-unchanged')
+        self.assertFalse(any(str(location.latitude) in line for line in self.logs))
+
+    def test_manual_dry_run_and_already_done_never_submit(self):
+        location = self.enable_manual_location()
+        self.state['already'] = True
+        result = self.runner.perform(self.context, True)
+        self.assertEqual(result.code, 'checked')
+        self.assertEqual(self.state['submitted'], 0)
+        from browser import NATIVE_LOCATION_JS
+        position = self.context.pages[0].evaluate(NATIVE_LOCATION_JS)
+        self.assertAlmostEqual(position['lat'], location.latitude)
+        self.assertAlmostEqual(position['lng'], location.longitude)
+
+    def test_manual_location_preserves_school_range_rejection(self):
+        self.enable_manual_location()
+        self.state['outside'] = True
+        with self.assertRaises(AppError) as caught:
+            self.runner.perform(self.context, False)
+        self.assertEqual(caught.exception.code, 'outside_range')
+        self.assertEqual(self.state['submitted'], 0)
+
+    def test_missing_manual_location_never_opens_school_page(self):
+        self.runner.settings.location_mode = 'manual'
+        with self.assertRaises(AppError) as caught:
+            self.runner.perform(self.context, False)
+        self.assertEqual(caught.exception.code, 'location_config')
+        self.assertEqual(self.state['menu_queried'], 0)
+        self.assertEqual(self.state['submitted'], 0)
+
+    def test_device_location_preserves_map_provider(self):
+        self.state['use_geo'] = True
+        result = self.runner.perform(self.context, True)
+        self.assertEqual(result.code, 'checked')
+        self.assertEqual(self.context.pages[0].evaluate('window.geoSource'), 'bmap')
 
     def test_fake_success_toast_is_not_enough(self):
         self.state['reject'] = True

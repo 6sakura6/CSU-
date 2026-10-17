@@ -11,7 +11,7 @@ from core import (SERVICE_URL, SCHOOL_ORIGIN, MENU_SUFFIX, QUERY_SUFFIX,
                   now_cn, server_batch, find_punch_menu, resolve_menu_url, route_key)
 
 
-# Read the page's own live location; never replace navigator or invent coordinates.
+# Read the location and range decision from the page's normal component.
 LOCATION_STATE_JS = """() => {
     const root = document.querySelector('#app');
     const stack = root && root.__vue__ ? [root.__vue__] : [];
@@ -40,6 +40,37 @@ NATIVE_LOCATION_JS = """() => new Promise(resolve => {
         () => resolve({ok:false}),
         {enableHighAccuracy:true, maximumAge:0, timeout:15000});
 })"""
+
+# Manual GPS coordinates are supplied through Playwright's browser geolocation API.
+# The school's first provider uses BMapGL (which can return an IP-based location).
+# Decline only that provider's position result so the school's existing GPS fallback
+# applies its own WGS84-to-GCJ02 conversion, reverse geocoding and range validation.
+MANUAL_LOCATION_INIT_JS = """(() => {
+    if (location.origin !== 'https://zhxg.csu.edu.cn') return;
+    const patched = new WeakSet();
+    const patch = sdk => {
+        const proto = sdk && sdk.Geolocation && sdk.Geolocation.prototype;
+        if (!proto || patched.has(proto)) return;
+        Object.defineProperties(proto, {
+            getCurrentPosition: {configurable:true, writable:true, value:function(callback) {
+                queueMicrotask(() => { if (typeof callback === 'function') callback(null); });
+            }},
+            getStatus: {configurable:true, writable:true, value:function() { return 2; }}
+        });
+        patched.add(proto);
+    };
+    const descriptor = Object.getOwnPropertyDescriptor(window, 'BMapGL');
+    if (!descriptor || descriptor.configurable) {
+        let current = window.BMapGL;
+        Object.defineProperty(window, 'BMapGL', {
+            configurable:true, enumerable:true,
+            get() { patch(current); return current; },
+            set(value) { current = value; patch(current); }
+        });
+    } else {
+        patch(window.BMapGL);
+    }
+})()"""
 
 
 def valid_location(value):
@@ -241,7 +272,8 @@ class BrowserRunner:
         return status
 
     def location(self, page):
-        self.log("等待网页获取电脑的真实定位。")
+        manual = self.settings.location_mode == "manual"
+        self.log("等待网页读取手动定位。" if manual else "等待网页获取电脑的真实定位。")
         deadline = time.monotonic() + 60
         refreshed = False
         while time.monotonic() < deadline:
@@ -250,7 +282,7 @@ class BrowserRunner:
             if valid_location(value) and not value.get("locating"):
                 if value.get("canPunch") is False:
                     raise AppError("outside_range", "学校页面判断当前定位不符合考勤范围，未提交。", True)
-                self.log("电脑定位已取得" + ("，地址已解析。" if value.get("name") else "，地址将由网页继续解析。"))
+                self.log(("手动定位已由网页读取" if manual else "电脑定位已取得") + ("，地址已解析。" if value.get("name") else "，地址将由网页继续解析。"))
                 return
             if not refreshed and time.monotonic() > deadline - 25:
                 tab = self.visible(page.get_by_text("打卡", exact=True))
@@ -258,7 +290,22 @@ class BrowserRunner:
                     tab.click()  # Uses the page's own normal refresh-location handler.
                 refreshed = True
             self.pause(page, 0.5)
-        raise AppError("location", "无法取得电脑定位。请检查 Windows 和 Edge 定位权限，未提交打卡。", True)
+        message = ("网页未能读取手动定位，请检查坐标格式与学校页面的定位提示，未提交打卡。" if manual else
+                   "无法取得电脑定位。请检查 Windows 和 Edge 定位权限，未提交打卡。")
+        raise AppError("location", message, True)
+
+    def configure_location(self, context):
+        if self.settings.location_mode == "manual":
+            try:
+                location = self.store.manual_location()
+            except Exception:
+                raise AppError("location_config", "手动坐标无法读取，请在定位设置中重新填写并保存。", True) from None
+            if location is None:
+                raise AppError("location_config", "请先在定位设置中保存纬度和经度。", True)
+            context.set_geolocation(location.geolocation())
+            context.add_init_script(script=MANUAL_LOCATION_INIT_JS)
+            self.log("本次使用本机保存的手动 GPS 坐标，学校页面将继续解析地址并检查考勤范围。")
+        context.grant_permissions(["geolocation"], origin=SCHOOL_ORIGIN)
 
     def verify(self, context, old_status):
         # A new page and bare route discard old component state and success query parameters.
@@ -273,6 +320,7 @@ class BrowserRunner:
         raise AppError("unconfirmed", "提交后尚未查到当天成功记录；下一次重试会先查状态，避免重复提交。")
 
     def perform(self, context, dry_run):
+        self.configure_location(context)
         page = context.new_page()
         page.set_default_timeout(10000)
         page.on("response", self.observe)
@@ -281,11 +329,11 @@ class BrowserRunner:
             if not status.punched and not status.exempt:
                 self.location(page)
             else:
-                self.log("今日已打卡或免打卡，正在单独检查浏览器定位。")
+                self.log("今日已打卡或免打卡，正在单独检查浏览器定位配置。")
                 location = page.evaluate(NATIVE_LOCATION_JS)
                 if not location.get("ok") or not valid_location(location):
                     raise AppError("location", "登录与班次查询通过，但浏览器定位不可用；尚未验证自动打卡。", True)
-                self.log("浏览器已取得电脑真实定位。")
+                self.log("浏览器已读取手动定位。" if self.settings.location_mode == "manual" else "浏览器已取得电脑真实定位。")
             return RunResult("checked", "登录、班次与定位检查通过。本次未提交打卡。")
         if status.record_is_today(now_cn()):
             return RunResult("already_done", "服务端显示今天已经打卡，已跳过。", True)
@@ -344,8 +392,6 @@ class BrowserRunner:
                 )
                 self.context = context
                 context.set_default_timeout(10000)
-                # Explicitly authorized by the user. No geolocation value is emulated or overridden.
-                context.grant_permissions(["geolocation"], origin=SCHOOL_ORIGIN)
                 try:
                     result = self.perform(context, dry_run)
                     return result

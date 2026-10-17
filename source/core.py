@@ -5,6 +5,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta, timezone, time as dtime
 from urllib.parse import parse_qs, unquote, urlsplit, urlunsplit, urlencode
 import re
+import math
 
 SHANGHAI = timezone(timedelta(hours=8), "Asia/Shanghai")
 SERVICE_URL = "https://zhxg.csu.edu.cn/znzhxgpt_h5/#/pages/service/index"
@@ -29,6 +30,60 @@ def parse_time(value: str) -> dtime:
         raise ValueError("请输入有效时间（00:00 至 23:59）。") from None
 
 
+def parse_coordinate(value, axis: str) -> float:
+    label, limit = ("纬度", 90) if axis == "lat" else ("经度", 180)
+    text = str(value).strip().upper()
+    directions = {"北纬": "N", "南纬": "S", "东经": "E", "西经": "W"}
+    for name, symbol in directions.items():
+        text = text.replace(name, symbol)
+    prefix = re.match(r"^[NSEW]", text)
+    suffix = re.search(r"[NSEW]$", text)
+    direction = prefix[0] if prefix else suffix[0] if suffix else ""
+    if prefix and suffix:
+        raise ValueError(f"{label}只需在一侧标注方向。")
+    if direction and direction not in ("NS" if axis == "lat" else "EW"):
+        raise ValueError(f"{label}方向不匹配，请检查是否把经纬度填反。")
+    if prefix:
+        text = text[1:].strip()
+    elif suffix:
+        text = text[:-1].strip()
+    text = text.translate(str.maketrans({"度": "°", "′": "'", "’": "'", "分": "'",
+                                        "″": '"', "”": '"', "秒": '"', "−": "-"}))
+    if re.fullmatch(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)", text):
+        result = float(text)
+    else:
+        match = re.fullmatch(r'''([+-]?\d+)\s*°\s*(\d{1,2})\s*'\s*(\d{1,2}(?:\.\d+)?)\s*"''', text)
+        if not match:
+            raise ValueError(f"{label}请输入小数或度分秒，例如 28.123456 或 28°7′24″。")
+        degree, minute, second = match.groups()
+        if int(minute) >= 60 or float(second) >= 60:
+            raise ValueError(f"{label}的分、秒必须小于 60。")
+        result = (abs(int(degree)) + int(minute) / 60 + float(second) / 3600) * (-1 if degree.startswith("-") else 1)
+    if direction:
+        if text.startswith("-"):
+            raise ValueError(f"{label}请使用方向或负号其中一种表示方式。")
+        result = abs(result) * (-1 if direction in "SW" else 1)
+    if not math.isfinite(result) or not -limit <= result <= limit:
+        raise ValueError(f"{label}须在 {-limit} 至 {limit} 度之间，请检查经纬度顺序。")
+    return result
+
+
+@dataclass(frozen=True)
+class ManualLocation:
+    latitude: float
+    longitude: float
+
+    @classmethod
+    def from_inputs(cls, latitude, longitude):
+        lat, lng = parse_coordinate(latitude, "lat"), parse_coordinate(longitude, "lng")
+        if lat == 0 and lng == 0:
+            raise ValueError("请填写实际位置，不能将经纬度同时设为 0。")
+        return cls(lat, lng)
+
+    def geolocation(self):
+        return {"latitude": self.latitude, "longitude": self.longitude, "accuracy": 100}
+
+
 @dataclass
 class Settings:
     start: str = "21:00"
@@ -36,8 +91,11 @@ class Settings:
     retry_minutes: int = 5
     manual_wait_seconds: int = 300
     auto_start: bool = False
+    location_mode: str = "device"
 
     def validate(self):
+        if self.location_mode not in ("device", "manual"):
+            raise ValueError("定位方式无效，请重新打开定位设置。")
         if parse_time(self.end) < parse_time(self.start):
             raise ValueError("重试截止时间不能早于每日打卡时间；当前版本按同一天运行。")
         if not 1 <= int(self.retry_minutes) <= 60:

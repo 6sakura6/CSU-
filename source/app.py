@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ctypes
 from datetime import datetime, timedelta
+from dataclasses import replace
 import json
 import logging
 from logging.handlers import RotatingFileHandler
@@ -13,11 +14,11 @@ import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from core import Settings, now_cn, parse_time, SHANGHAI, RunResult
+from core import Settings, now_cn, parse_time, SHANGHAI, RunResult, ManualLocation
 from storage import Store, SingleInstance, app_dir, crypt, atomic_write
 from browser import BrowserRunner
 
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 DISCLAIMER_TEXT = "本程序仅供学习和测试使用。\n\n请在下载后 24 小时内删除。"
 
 
@@ -83,6 +84,7 @@ class App:
         self.start_time = tk.StringVar(value=self.settings.start)
         self.end_time = tk.StringVar(value=self.settings.end)
         self.retry = tk.StringVar(value=str(self.settings.retry_minutes))
+        self.location_text = tk.StringVar(value=self.location_summary())
         self.status = tk.StringVar(value="等待配置")
         self.next_text = tk.StringVar(value="保存账户和时间后，点击开始定时。")
         self.saved_text = tk.StringVar(value="已保存账户；密码留空表示沿用已保存密码。" if username else "账户密码只在本机输入和加密保存。")
@@ -121,7 +123,7 @@ class App:
         heading.pack(fill="x", pady=(0, 17))
         tk.Label(heading, text="平安打卡助手", bg="#F2F5FA", fg="#153A76",
                  font=("Microsoft YaHei UI", 23, "bold")).pack(anchor="w")
-        tk.Label(heading, text="中南大学 · 校园账户登录 · 电脑真实定位 · 每日定时执行",
+        tk.Label(heading, text="中南大学 · 校园账户登录 · 定位设置 · 每日定时执行",
                  bg="#F2F5FA", fg="#64758C", font=("Microsoft YaHei UI", 10)).pack(anchor="w", pady=(4, 0))
 
         account = ttk.Frame(outer, style="Card.TFrame", padding=17)
@@ -147,6 +149,9 @@ class App:
         ttk.Label(schedule, text="重试间隔（分钟）").grid(row=1, column=4, padx=(0, 8))
         ttk.Spinbox(schedule, textvariable=self.retry, from_=1, to=60, width=5).grid(row=1, column=5)
         ttk.Label(schedule, text="每天重新读取学校开放时段；超出学校时段不提交。时间格式为 HH:MM。", style="Muted.TLabel").grid(row=2, column=0, columnspan=6, sticky="w", pady=(11, 0))
+        ttk.Label(schedule, textvariable=self.location_text, style="Muted.TLabel").grid(row=3, column=0, columnspan=5, sticky="w", pady=(8, 0))
+        self.location_button = ttk.Button(schedule, text="定位设置", command=self.configure_location)
+        self.location_button.grid(row=3, column=5, pady=(8, 0))
 
         controls = ttk.Frame(outer)
         controls.pack(fill="x", pady=(1, 13))
@@ -185,6 +190,95 @@ class App:
         self.start_button.configure(text="定时已启动" if self.enabled else "开始定时",
                                     style="Running.TButton" if self.enabled else "Primary.TButton")
 
+    def location_summary(self):
+        return "定位：手动输入坐标（WGS84 / GPS）" if self.settings.location_mode == "manual" else "定位：使用电脑自动定位"
+
+    def configure_location(self):
+        if self.worker and self.worker.is_alive():
+            messagebox.showinfo("任务进行中", "请先停止并等待本次操作结束，再修改定位。", parent=self.root)
+            return
+        saved = None
+        try:
+            saved = self.store.manual_location()
+        except Exception:
+            pass
+        dialog = tk.Toplevel(self.root)
+        dialog.title("定位设置")
+        dialog.geometry("610x440")
+        dialog.resizable(False, False)
+        dialog.configure(bg="white")
+        dialog.transient(self.root)
+        mode = tk.StringVar(dialog, value=self.settings.location_mode)
+        latitude = tk.StringVar(dialog, value=f"{saved.latitude:.8f}" if saved else "")
+        longitude = tk.StringVar(dialog, value=f"{saved.longitude:.8f}" if saved else "")
+        preview = tk.StringVar(dialog, value="填好后点击“校验并换算”，可查看十进制度结果。")
+        body = ttk.Frame(dialog, style="Card.TFrame", padding=22)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text="定位方式", style="Title.TLabel").pack(anchor="w", pady=(0, 10))
+        options = ttk.Frame(body, style="Card.TFrame")
+        options.pack(fill="x")
+        ttk.Radiobutton(options, text="电脑自动定位", variable=mode, value="device", command=lambda: refresh()).pack(side="left", padx=(0, 20))
+        ttk.Radiobutton(options, text="手动输入定位", variable=mode, value="manual", command=lambda: refresh()).pack(side="left")
+        fields = ttk.Frame(body, style="Card.TFrame")
+        fields.pack(fill="x", pady=(18, 12))
+        fields.columnconfigure(1, weight=1)
+        ttk.Label(fields, text="纬度（北纬 / 南纬）").grid(row=0, column=0, sticky="w", padx=(0, 12), pady=(0, 10))
+        lat_entry = ttk.Entry(fields, textvariable=latitude, width=34)
+        lat_entry.grid(row=0, column=1, sticky="ew", pady=(0, 10))
+        ttk.Label(fields, text="经度（东经 / 西经）").grid(row=1, column=0, sticky="w", padx=(0, 12))
+        lng_entry = ttk.Entry(fields, textvariable=longitude, width=34)
+        lng_entry.grid(row=1, column=1, sticky="ew")
+        ttk.Label(body, text="格式：小数（如 28.123456），或度分秒（如 28°7′24″）。\n"
+                  "分别填写纬度、经度，不要把两个数粘贴到同一输入框。\n"
+                  "北纬、东经为正；南纬、西经可填负数或标注方向。\n"
+                  "使用本人当前所在地的 WGS84 / GPS 坐标；其他坐标系请先转换。",
+                  style="Muted.TLabel", wraplength=560, justify="left").pack(anchor="w")
+        ttk.Label(body, textvariable=preview, wraplength=560, foreground="#1859B5").pack(anchor="w", pady=(14, 12))
+
+        def parse():
+            location = ManualLocation.from_inputs(latitude.get(), longitude.get())
+            preview.set(f"换算结果：纬度 {location.latitude:.8f}，经度 {location.longitude:.8f}")
+            return location
+
+        def check():
+            try:
+                parse()
+            except ValueError as error:
+                messagebox.showerror("坐标格式不正确", str(error), parent=dialog)
+
+        def save_location():
+            if self.worker and self.worker.is_alive():
+                messagebox.showinfo("任务进行中", "请等待本次操作结束后再保存定位。", parent=dialog)
+                return
+            try:
+                updated = replace(self.settings, location_mode=mode.get()).validate()
+                if updated.location_mode == "manual":
+                    self.store.save_manual_location(parse())
+                self.store.save_settings(updated)
+                self.settings = updated
+                self.location_text.set(self.location_summary())
+                self.log("定位设置已保存；坐标在本机加密保存。" if updated.location_mode == "manual" else "已切换为电脑自动定位。")
+                dialog.destroy()
+            except Exception as error:
+                message = str(error) if isinstance(error, (ValueError, OSError)) else "无法保存定位设置，请检查本地文件。"
+                messagebox.showerror("无法保存定位", message, parent=dialog)
+
+        actions = ttk.Frame(body, style="Card.TFrame")
+        actions.pack(side="bottom", fill="x")
+        check_button = ttk.Button(actions, text="校验并换算", command=check)
+        check_button.pack(side="left")
+        ttk.Button(actions, text="保存定位设置", style="Primary.TButton", command=save_location).pack(side="right")
+        ttk.Button(actions, text="取消", command=dialog.destroy).pack(side="right", padx=(0, 8))
+
+        def refresh():
+            state = "normal" if mode.get() == "manual" else "disabled"
+            for widget in (lat_entry, lng_entry, check_button):
+                widget.configure(state=state)
+
+        refresh()
+        dialog.grab_set()
+        self.root.wait_window(dialog)
+
     def save(self, quiet=False):
         if self.worker and self.worker.is_alive():
             if not quiet:
@@ -192,7 +286,8 @@ class App:
             return False
         try:
             settings = Settings(start=self.start_time.get().strip(), end=self.end_time.get().strip(),
-                                retry_minutes=int(self.retry.get()), auto_start=self.enabled).validate()
+                                retry_minutes=int(self.retry.get()), auto_start=self.enabled,
+                                location_mode=self.settings.location_mode).validate()
             user, password = self.username.get().strip(), self.password.get()
             try:
                 existing = self.store.credentials()
@@ -255,7 +350,7 @@ class App:
         self.stop_event = threading.Event()
         self.set_awake(True)
         self.status.set("正在检查登录与定位…" if mode == "check" else "正在检查并执行打卡…")
-        for button in (self.save_button, self.start_button, self.check_button, self.run_button):
+        for button in (self.save_button, self.start_button, self.check_button, self.run_button, self.location_button):
             button.configure(state="disabled")
         self.log("开始仅检查（不会提交）。" if mode == "check" else "开始执行；先查询今天是否已经打卡。")
         runner = BrowserRunner(self.store, self.settings, self.log, self.stop_event, scheduled=mode == "scheduled")
@@ -276,7 +371,7 @@ class App:
             self.root.after(100, lambda: self.handle_result(result))
             return
         self.worker = None
-        for button in (self.save_button, self.start_button, self.check_button, self.run_button):
+        for button in (self.save_button, self.start_button, self.check_button, self.run_button, self.location_button):
             button.configure(state="normal")
         self.log(result.message, "attention" if result.needs_user else "info")
         self.status.set(result.message)

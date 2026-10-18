@@ -118,11 +118,38 @@ class Store:
 
 
 class SingleInstance:
+    @staticmethod
+    def name(directory):
+        return "Local\\CSU_Peace_Checkin_" + hashlib.sha256(str(directory.resolve()).lower().encode()).hexdigest()[:24]
+
+    @staticmethod
+    def kernel_api():
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.CloseHandle.argtypes, kernel.CloseHandle.restype = [wintypes.HANDLE], wintypes.BOOL
+        kernel.OpenEventW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
+        kernel.OpenEventW.restype = wintypes.HANDLE
+        kernel.SetEvent.argtypes, kernel.SetEvent.restype = [wintypes.HANDLE], wintypes.BOOL
+        return kernel
+
+    @classmethod
+    def signal(cls, directory, command):
+        if command not in ("show", "exit"):
+            raise ValueError("Unsupported instance command.")
+        kernel = cls.kernel_api()
+        event = kernel.OpenEventW(0x0002, False, cls.name(directory) + "_" + command)
+        if not event:
+            return False
+        try:
+            return bool(kernel.SetEvent(event))
+        finally:
+            kernel.CloseHandle(event)
+
     def __init__(self, directory: Path):
-        self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.kernel = self.kernel_api()
+        self.events = {}
         self.kernel.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
         self.kernel.CreateMutexW.restype = wintypes.HANDLE
-        name = "Local\\CSU_Peace_Checkin_" + hashlib.sha256(str(directory.resolve()).lower().encode()).hexdigest()[:24]
+        name = self.name(directory)
         self.handle = self.kernel.CreateMutexW(None, False, name)
         error = ctypes.get_last_error()
         if not self.handle:
@@ -130,9 +157,27 @@ class SingleInstance:
         if error == 183:
             self.close()
             raise OSError("这个目录中的打卡助手已经在运行，请查看任务栏。")
+        self.kernel.CreateEventW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.BOOL, wintypes.LPCWSTR]
+        self.kernel.CreateEventW.restype = wintypes.HANDLE
+        self.kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        self.kernel.WaitForSingleObject.restype = wintypes.DWORD
+        for command in ("exit", "show"):
+            event = self.kernel.CreateEventW(None, False, False, name + "_" + command)
+            if not event:
+                self.close()
+                raise OSError("无法创建程序窗口通知通道。")
+            self.events[command] = event
+
+    def command(self):
+        for command, event in self.events.items():
+            if self.kernel.WaitForSingleObject(event, 0) == 0:
+                return command
+        return None
 
     def close(self):
+        for event in self.events.values():
+            self.kernel.CloseHandle(event)
+        self.events.clear()
         if self.handle:
-            self.kernel.CloseHandle.argtypes = [wintypes.HANDLE]
             self.kernel.CloseHandle(self.handle)
             self.handle = None

@@ -17,8 +17,9 @@ from tkinter import ttk, messagebox
 from core import Settings, now_cn, parse_time, SHANGHAI, RunResult, ManualLocation
 from storage import Store, SingleInstance, app_dir, crypt, atomic_write
 from browser import BrowserRunner
+from tray import SystemTray
 
-VERSION = "1.0.4"
+VERSION = "1.0.5"
 DISCLAIMER_TEXT = "本程序仅供学习和测试使用。\n\n请在下载后 24 小时内删除。"
 
 
@@ -52,7 +53,7 @@ def show_disclaimer(root):
 
 
 class App:
-    def __init__(self, root, store=None):
+    def __init__(self, root, store=None, tray_factory=SystemTray):
         self.root, self.store = root, store or Store()
         self.lock = SingleInstance(self.store.root)
         self.messages = queue.Queue()
@@ -60,6 +61,10 @@ class App:
         self.worker = None
         self.enabled = False
         self.closing = False
+        self.closed = False
+        self.hidden = False
+        self.tray_hint_shown = False
+        self.tray = tray_factory(lambda action: self.messages.put(("tray", action)))
         self.next_attempt = None
         self.completed_day = ""
         self.checked_day = ""
@@ -110,7 +115,8 @@ class App:
         style.configure("TLabel", background="white", foreground="#24344B", font=("Microsoft YaHei UI", 10))
         style.configure("Muted.TLabel", foreground="#627086", font=("Microsoft YaHei UI", 9))
         style.configure("Title.TLabel", font=("Microsoft YaHei UI", 12, "bold"))
-        style.configure("TButton", padding=(15, 9), font=("Microsoft YaHei UI", 10))
+        style.configure("TButton", padding=(15, 9), font=("Microsoft YaHei UI", 10), width=0)
+        style.configure("Exit.TButton", padding=(10, 9))
         style.configure("Primary.TButton", background="#2466DA", foreground="white", borderwidth=0)
         style.map("Primary.TButton", background=[("active", "#1955BC"), ("disabled", "#B5C4DA")])
         style.configure("Running.TButton", background="#D93025", foreground="white", borderwidth=0)
@@ -164,6 +170,8 @@ class App:
         self.check_button.pack(side="left", padx=(0, 7))
         self.run_button = ttk.Button(controls, text="立即检查并打卡", command=lambda: self.launch("manual"))
         self.run_button.pack(side="left")
+        self.exit_button = ttk.Button(controls, text="退出程序", style="Exit.TButton", command=self.request_exit)
+        self.exit_button.pack(side="right")
 
         state = ttk.Frame(outer, style="Card.TFrame", padding=17)
         state.pack(fill="x", pady=(0, 12))
@@ -176,7 +184,7 @@ class App:
         self.log_text = tk.Text(log_frame, height=9, wrap="word", state="disabled", bg="#F7F9FC", fg="#354761",
                                 relief="flat", padx=10, pady=8, font=("Microsoft YaHei UI", 9))
         self.log_text.pack(fill="both", expand=True)
-        tk.Label(outer, text="运行中请保持电脑联网。开始定时会防止自动睡眠；程序关闭后不执行，重新打开会恢复上次启用的定时。",
+        tk.Label(outer, text="点击右上角 × 将转入系统托盘，定时继续运行；右键托盘图标可显示窗口或退出程序。运行中请保持电脑联网。",
                  bg="#F2F5FA", fg="#65758B", wraplength=790, justify="left", font=("Microsoft YaHei UI", 9)).pack(side="bottom", before=log_frame, anchor="w", pady=(12, 0))
 
     def log(self, text, kind="info"):
@@ -189,6 +197,7 @@ class App:
     def update_schedule_button(self):
         self.start_button.configure(text="定时已启动" if self.enabled else "开始定时",
                                     style="Running.TButton" if self.enabled else "Primary.TButton")
+        self.tray.set_running(self.enabled)
 
     def location_summary(self):
         return "定位：手动输入坐标（WGS84 / GPS）" if self.settings.location_mode == "manual" else "定位：使用电脑自动定位"
@@ -397,10 +406,21 @@ class App:
         self.update_schedule_button()
 
     def tick(self):
+        if self.closed:
+            return
+        command = self.lock.command()
+        if command:
+            self.handle_tray_action(command)
+            if self.closed:
+                return
         try:
             while True:
                 kind, value = self.messages.get_nowait()
-                if kind == "result":
+                if kind == "tray":
+                    self.handle_tray_action(value)
+                    if self.closed:
+                        return
+                elif kind == "result":
                     self.handle_result(value)
                 else:
                     text, level = value
@@ -414,6 +434,8 @@ class App:
                     self.log_text.see("end")
                     self.log_text.configure(state="disabled")
                     if level == "attention":
+                        if self.hidden and not self.closing:
+                            self.show_window()
                         self.root.bell()
         except queue.Empty:
             pass
@@ -444,16 +466,52 @@ class App:
         self.root.after(300, self.tick)
 
     def close(self):
+        if self.closing or self.closed:
+            return
+        self.tray.set_running(self.enabled)
+        if not self.tray.start():
+            messagebox.showerror("无法转入后台", "系统托盘图标未能启动，窗口将保持打开，请稍后重试。", parent=self.root)
+            return
+        self.root.withdraw()
+        self.hidden = True
+        if not self.tray_hint_shown:
+            self.tray.notify("已转入后台。已启用的定时会继续运行；右键此图标可显示窗口或退出程序。")
+            self.tray_hint_shown = True
+
+    def show_window(self):
+        if self.closed:
+            return
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+        self.hidden = False
+
+    def handle_tray_action(self, action):
+        if action == "show":
+            self.show_window()
+        elif action == "exit":
+            self.request_exit()
+        elif action == "unavailable" and not self.closed:
+            self.show_window()
+            self.log("系统托盘暂时不可用，已恢复主窗口；当前定时状态不变。", "attention")
+
+    def request_exit(self):
+        if self.closed or self.closing:
+            return
+        self.closing = True
+        self.enabled = False
+        self.stop_event.set()
+        self.tray.set_closing()
         if self.worker and self.worker.is_alive():
-            self.closing = True
-            self.enabled = False
-            self.stop_event.set()
-            self.status.set("正在停止浏览器并关闭，请稍候…")
-            self.root.withdraw()
+            self.status.set("正在停止当前操作并退出，请稍候…")
         else:
             self.finish_close()
 
     def finish_close(self):
+        if self.closed:
+            return
+        self.closed = True
+        self.tray.stop()
         self.set_awake(False)
         self.lock.close()
         self.root.destroy()
@@ -461,10 +519,15 @@ class App:
 
 def self_test():
     """Packaged-runtime test: no login, permissions or school submission."""
-    result = {"version": VERSION, "encryption": False, "browser_driver": False}
+    result = {"version": VERSION, "encryption": False, "browser_driver": False, "system_tray": False}
     try:
         sample = b"packaged-dpapi-roundtrip"
         result["encryption"] = crypt(crypt(sample), decrypt=True) == sample
+        tray = SystemTray(lambda action: None)
+        try:
+            result["system_tray"] = tray.start()
+        finally:
+            tray.stop()
         from playwright.sync_api import sync_playwright
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(channel="msedge", headless=True)
@@ -475,12 +538,16 @@ def self_test():
     except Exception as error:
         result["error_type"] = type(error).__name__
     atomic_write(app_dir() / "data" / "self-test.json", json.dumps(result, indent=2).encode())
-    return 0 if result["encryption"] and result["browser_driver"] else 1
+    return 0 if result["encryption"] and result["browser_driver"] and result["system_tray"] else 1
 
 
 def main():
     if "--self-test" in sys.argv:
         return self_test()
+    if "--quit" in sys.argv:
+        return 0 if SingleInstance.signal(app_dir() / "data", "exit") else 1
+    if SingleInstance.signal(app_dir() / "data", "show"):
+        return 0
     root = tk.Tk()
     if not show_disclaimer(root):
         root.destroy()

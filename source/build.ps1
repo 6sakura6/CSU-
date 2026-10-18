@@ -11,6 +11,7 @@ foreach ($target in @($buildRoot, $distRoot)) {
 }
 New-Item -ItemType Directory -Path $buildRoot -Force | Out-Null
 & $Python -m PyInstaller --noconfirm --windowed --onedir `
+    --hidden-import pystray._win32 `
     --name '平安打卡助手' --distpath $distRoot --workpath $buildRoot `
     --specpath $buildRoot (Join-Path $PSScriptRoot 'app.py')
 if ($LASTEXITCODE -ne 0) { throw 'Application build failed.' }

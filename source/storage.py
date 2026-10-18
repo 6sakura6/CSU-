@@ -144,6 +144,15 @@ class SingleInstance:
         finally:
             kernel.CloseHandle(event)
 
+    @classmethod
+    def is_running(cls, directory):
+        kernel = cls.kernel_api()
+        event = kernel.OpenEventW(0x0002, False, cls.name(directory) + "_show")
+        if not event:
+            return False
+        kernel.CloseHandle(event)
+        return True
+
     def __init__(self, directory: Path):
         self.kernel = self.kernel_api()
         self.events = {}

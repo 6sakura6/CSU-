@@ -5,6 +5,7 @@ import ctypes
 from datetime import datetime, timedelta
 from dataclasses import replace
 import json
+import hashlib
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -18,9 +19,11 @@ from core import Settings, now_cn, parse_time, SHANGHAI, RunResult, ManualLocati
 from storage import Store, SingleInstance, app_dir, crypt, atomic_write
 from browser import BrowserRunner
 from tray import SystemTray, ICON_PATH
+from startup import StartupRegistration, startup_is_authorized, self_test_registration
 
-VERSION = "1.0.6"
+VERSION = "1.0.7"
 DISCLAIMER_TEXT = "本程序仅供学习和测试使用。\n\n请在下载后 24 小时内删除。"
+STARTUP_CONSENT = hashlib.sha256(DISCLAIMER_TEXT.encode("utf-8")).hexdigest()
 
 
 def show_disclaimer(root):
@@ -53,7 +56,7 @@ def show_disclaimer(root):
 
 
 class App:
-    def __init__(self, root, store=None, tray_factory=SystemTray):
+    def __init__(self, root, store=None, tray_factory=SystemTray, startup_factory=StartupRegistration):
         self.root, self.store = root, store or Store()
         self.lock = SingleInstance(self.store.root)
         self.messages = queue.Queue()
@@ -76,6 +79,7 @@ class App:
         handler.setFormatter(logging.Formatter("%(message)s"))
         self.logger.addHandler(handler)
         self.settings = Settings()
+        self.startup = startup_factory()
         load_error = None
         try:
             self.settings = self.store.settings()
@@ -89,6 +93,11 @@ class App:
         self.start_time = tk.StringVar(value=self.settings.start)
         self.end_time = tk.StringVar(value=self.settings.end)
         self.retry = tk.StringVar(value=str(self.settings.retry_minutes))
+        try:
+            login_enabled = startup_is_authorized(self.settings, self.startup, STARTUP_CONSENT)
+        except OSError:
+            login_enabled = False
+        self.login_start = tk.BooleanVar(value=login_enabled)
         self.location_text = tk.StringVar(value=self.location_summary())
         self.status = tk.StringVar(value="等待配置")
         self.next_text = tk.StringVar(value="保存账户和时间后，点击开始定时。")
@@ -117,6 +126,8 @@ class App:
         style.configure("Title.TLabel", font=("Microsoft YaHei UI", 12, "bold"))
         style.configure("TButton", padding=(15, 9), font=("Microsoft YaHei UI", 10), width=0)
         style.configure("Exit.TButton", padding=(10, 9))
+        style.configure("Option.TCheckbutton", background="white", foreground="#24344B", font=("Microsoft YaHei UI", 9))
+        style.map("Option.TCheckbutton", background=[("active", "white")])
         style.configure("Primary.TButton", background="#2466DA", foreground="white", borderwidth=0)
         style.map("Primary.TButton", background=[("active", "#1955BC"), ("disabled", "#B5C4DA")])
         style.configure("Running.TButton", background="#D93025", foreground="white", borderwidth=0)
@@ -158,6 +169,9 @@ class App:
         ttk.Label(schedule, textvariable=self.location_text, style="Muted.TLabel").grid(row=3, column=0, columnspan=5, sticky="w", pady=(8, 0))
         self.location_button = ttk.Button(schedule, text="定位设置", command=self.configure_location)
         self.location_button.grid(row=3, column=5, pady=(8, 0))
+        self.login_start_button = ttk.Checkbutton(schedule, text="开机自启动（登录 Windows 后在托盘运行）",
+                                                 style="Option.TCheckbutton", variable=self.login_start, command=self.toggle_login_start)
+        self.login_start_button.grid(row=4, column=0, columnspan=6, sticky="w", pady=(8, 0))
 
         controls = ttk.Frame(outer)
         controls.pack(fill="x", pady=(1, 13))
@@ -201,6 +215,43 @@ class App:
 
     def location_summary(self):
         return "定位：手动输入坐标（WGS84 / GPS）" if self.settings.location_mode == "manual" else "定位：使用电脑自动定位"
+
+    def toggle_login_start(self):
+        requested = self.login_start.get()
+        if requested and not messagebox.askokcancel(
+                "启用开机自启动", DISCLAIMER_TEXT + "\n\n启用后，登录 Windows 时会直接进入系统托盘，沿用本次免责声明确认，"
+                "并恢复上次已开启的定时。手动打开仍会显示免责声明。\n\n是否启用？", parent=self.root):
+            self.login_start.set(False)
+            return
+        previous = self.settings
+        updated = replace(previous, launch_at_login=requested,
+                          startup_consent=STARTUP_CONSENT if requested else "")
+        try:
+            self.store.save_settings(updated)
+            try:
+                self.startup.set_enabled(requested)
+            except Exception:
+                self.store.save_settings(previous)
+                raise
+            self.settings = updated
+            self.log("已启用开机自启动：登录 Windows 后进入托盘，恢复上次已开启的定时。" if requested else "已关闭开机自启动。")
+        except Exception:
+            try:
+                self.login_start.set(startup_is_authorized(previous, self.startup, STARTUP_CONSENT))
+            except OSError:
+                self.login_start.set(False)
+            messagebox.showerror("无法保存自启动设置", "开机自启动设置未能保存，请检查本机写入权限；原定时设置不变。", parent=self.root)
+
+    def start_from_login(self):
+        self.tray_hint_shown = True
+        self.close()
+        self.log(DISCLAIMER_TEXT.replace("\n", " "))
+        if self.hidden:
+            state = "将恢复上次已开启的定时。" if self.settings.auto_start else "定时尚未开启，可从托盘打开窗口设置。"
+            self.tray.notify(DISCLAIMER_TEXT + "\n\n已随 Windows 登录启动。" + state)
+        if self.settings.auto_start and not self.username.get():
+            self.show_window()
+            self.status.set("开机启动完成，但账户不可用，请重新保存账户。")
 
     def configure_location(self):
         if self.worker and self.worker.is_alive():
@@ -294,9 +345,8 @@ class App:
                 messagebox.showinfo("任务进行中", "请先停止并等待本次操作结束，再修改配置。", parent=self.root)
             return False
         try:
-            settings = Settings(start=self.start_time.get().strip(), end=self.end_time.get().strip(),
-                                retry_minutes=int(self.retry.get()), auto_start=self.enabled,
-                                location_mode=self.settings.location_mode).validate()
+            settings = replace(self.settings, start=self.start_time.get().strip(), end=self.end_time.get().strip(),
+                               retry_minutes=int(self.retry.get()), auto_start=self.enabled).validate()
             user, password = self.username.get().strip(), self.password.get()
             try:
                 existing = self.store.credentials()
@@ -470,6 +520,7 @@ class App:
             return
         self.tray.set_running(self.enabled)
         if not self.tray.start():
+            self.show_window()
             messagebox.showerror("无法转入后台", "系统托盘图标未能启动，窗口将保持打开，请稍后重试。", parent=self.root)
             return
         self.root.withdraw()
@@ -519,10 +570,12 @@ class App:
 
 def self_test():
     """Packaged-runtime test: no login, permissions or school submission."""
-    result = {"version": VERSION, "encryption": False, "browser_driver": False, "system_tray": False}
+    result = {"version": VERSION, "encryption": False, "browser_driver": False, "system_tray": False,
+              "startup_registration": False}
     try:
         sample = b"packaged-dpapi-roundtrip"
         result["encryption"] = crypt(crypt(sample), decrypt=True) == sample
+        result["startup_registration"] = self_test_registration()
         tray = SystemTray(lambda action: None)
         try:
             result["system_tray"] = tray.start()
@@ -538,7 +591,7 @@ def self_test():
     except Exception as error:
         result["error_type"] = type(error).__name__
     atomic_write(app_dir() / "data" / "self-test.json", json.dumps(result, indent=2).encode())
-    return 0 if result["encryption"] and result["browser_driver"] and result["system_tray"] else 1
+    return 0 if all(result.get(key) for key in ("encryption", "browser_driver", "system_tray", "startup_registration")) else 1
 
 
 def main():
@@ -546,15 +599,26 @@ def main():
         return self_test()
     if "--quit" in sys.argv:
         return 0 if SingleInstance.signal(app_dir() / "data", "exit") else 1
-    if SingleInstance.signal(app_dir() / "data", "show"):
+    from_login = "--startup" in sys.argv
+    if from_login:
+        try:
+            if not startup_is_authorized(Store().settings(), StartupRegistration(), STARTUP_CONSENT):
+                return 0
+        except Exception:
+            return 0
+        if SingleInstance.is_running(app_dir() / "data"):
+            return 0
+    elif SingleInstance.signal(app_dir() / "data", "show"):
         return 0
     root = tk.Tk()
     root.iconbitmap(default=str(ICON_PATH))
-    if not show_disclaimer(root):
+    if not from_login and not show_disclaimer(root):
         root.destroy()
         return 0
     try:
-        App(root)
+        application = App(root)
+        if from_login:
+            application.start_from_login()
     except Exception as error:
         messagebox.showerror("无法启动", str(error), parent=root)
         root.destroy()

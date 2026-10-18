@@ -92,6 +92,8 @@ class Settings:
     manual_wait_seconds: int = 300
     auto_start: bool = False
     location_mode: str = "device"
+    launch_at_login: bool = False
+    startup_consent: str = ""
 
     def validate(self):
         if self.location_mode not in ("device", "manual"):

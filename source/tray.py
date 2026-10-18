@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import threading
+from pathlib import Path
+
+
+ICON_PATH = Path(__file__).resolve().parent / "assets" / "app.ico"
 
 
 class SystemTray:
@@ -27,13 +31,10 @@ class SystemTray:
         self.stopping.clear()
         self.failed = self.was_visible = False
         try:
-            from PIL import Image, ImageDraw
+            from PIL import Image
             from pystray import Icon, Menu, MenuItem
-            image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-            draw = ImageDraw.Draw(image)
-            draw.rounded_rectangle((3, 3, 61, 61), radius=14, fill="#2466DA")
-            draw.ellipse((14, 14, 50, 50), outline="white", width=4)
-            draw.line((32, 22, 32, 33, 41, 38), fill="white", width=4)
+            with Image.open(ICON_PATH) as source:
+                image = source.convert("RGBA").resize((64, 64), Image.Resampling.LANCZOS)
             self.icon = Icon("csu-peace-checkin", image, "平安打卡助手 · " + self.status,
                              menu=Menu(
                                  MenuItem("显示主窗口", lambda: self.emit("show"), default=True),

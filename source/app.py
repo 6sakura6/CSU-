@@ -17,9 +17,9 @@ from tkinter import ttk, messagebox
 from core import Settings, now_cn, parse_time, SHANGHAI, RunResult, ManualLocation
 from storage import Store, SingleInstance, app_dir, crypt, atomic_write
 from browser import BrowserRunner
-from tray import SystemTray
+from tray import SystemTray, ICON_PATH
 
-VERSION = "1.0.5"
+VERSION = "1.0.6"
 DISCLAIMER_TEXT = "本程序仅供学习和测试使用。\n\n请在下载后 24 小时内删除。"
 
 
@@ -549,6 +549,7 @@ def main():
     if SingleInstance.signal(app_dir() / "data", "show"):
         return 0
     root = tk.Tk()
+    root.iconbitmap(default=str(ICON_PATH))
     if not show_disclaimer(root):
         root.destroy()
         return 0

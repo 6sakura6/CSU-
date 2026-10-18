@@ -21,7 +21,7 @@ from browser import BrowserRunner
 from tray import SystemTray, ICON_PATH
 from startup import StartupRegistration, startup_is_authorized, self_test_registration
 
-VERSION = "1.0.7"
+VERSION = "1.0.8"
 DISCLAIMER_TEXT = "本程序仅供学习和测试使用。\n\n请在下载后 24 小时内删除。"
 STARTUP_CONSENT = hashlib.sha256(DISCLAIMER_TEXT.encode("utf-8")).hexdigest()
 
@@ -114,7 +114,10 @@ class App:
 
     def build_ui(self):
         self.root.title(f"平安打卡助手  {VERSION}")
-        self.root.geometry("870x800")
+        # Leave room for the startup option and several visible log entries.
+        x = max(0, (self.root.winfo_screenwidth() - 870) // 2)
+        y = max(0, (self.root.winfo_screenheight() - 1000) // 2)
+        self.root.geometry(f"870x960+{x}+{y}")
         self.root.minsize(770, 730)
         self.root.configure(bg="#F2F5FA")
         style = ttk.Style()

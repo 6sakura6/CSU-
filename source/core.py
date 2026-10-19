@@ -111,6 +111,17 @@ class Settings:
         # The configured final minute is included, with no attempts after it.
         return parse_time(self.start) <= current <= parse_time(self.end).replace(second=59, microsecond=999999)
 
+    def next_run(self, at: datetime, *, finished=False, retry_at=None) -> datetime:
+        at = at.astimezone(SHANGHAI)
+        start = datetime.combine(at.date(), parse_time(self.start), tzinfo=SHANGHAI)
+        cutoff = datetime.combine(at.date(), parse_time(self.end), tzinfo=SHANGHAI) + timedelta(minutes=1)
+        if finished or at >= cutoff:
+            return start + timedelta(days=1)
+        if at < start:
+            return start
+        candidate = max(at, retry_at) if retry_at is not None else at
+        return candidate if candidate < cutoff else start + timedelta(days=1)
+
     def to_dict(self):
         return asdict(self)
 

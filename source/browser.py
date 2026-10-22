@@ -207,7 +207,7 @@ class BrowserRunner:
             text = page.locator("body").inner_text(timeout=5000)
             if any(word in text for word in ("用户名或密码错误", "用户名或密码有误", "密码错误",
                                              "用户不存在", "账号已锁定", "账户已锁定", "账号被冻结")):
-                raise AppError("credentials", "学校拒绝了登录信息；请检查账户密码，定时任务已暂停。", True)
+                raise AppError("credentials", "学校拒绝了登录信息；请检查账户密码，本次未能登录。", True)
             if not manual_notified and (self.visible(page.locator("#pwdFromId input[name='captcha']"))
                                         or "二次认证" in text or "短信验证码" in text):
                 self.log("登录需要人工验证，请在浏览器完成验证码或二次认证。", "attention")

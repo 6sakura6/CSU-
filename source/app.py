@@ -21,7 +21,7 @@ from browser import BrowserRunner
 from tray import SystemTray, ICON_PATH
 from startup import StartupRegistration, startup_is_authorized, self_test_registration
 
-VERSION = "1.0.9"
+VERSION = "1.0.10"
 DISCLAIMER_TEXT = "本程序仅供学习和测试使用。\n\n请在下载后 24 小时内删除。"
 STARTUP_CONSENT = hashlib.sha256(DISCLAIMER_TEXT.encode("utf-8")).hexdigest()
 
@@ -71,7 +71,6 @@ class App:
         self.next_attempt = None
         self.completed_day = ""
         self.checked_day = ""
-        self.paused_day = ""
         self.current_mode = ""
         self.current_day = ""
         self.logger = logging.getLogger("peace-checkin")
@@ -361,7 +360,7 @@ class App:
             if password:
                 self.store.save_credentials(user, password)
                 if not existing or existing["username"] != user:
-                    self.completed_day, self.checked_day, self.paused_day = "", "", ""
+                    self.completed_day, self.checked_day = "", ""
             elif not existing or existing["username"] != user:
                 raise ValueError("首次保存或更换账户时，请填写密码。")
             self.store.save_settings(settings)
@@ -385,7 +384,6 @@ class App:
         self.settings.auto_start = True
         self.store.save_settings(self.settings)
         self.next_attempt = None
-        self.paused_day = ""
         self.set_awake(True)
         self.update_schedule_button()
         self.status.set("定时已启动")
@@ -445,23 +443,20 @@ class App:
                 self.store.mark_done(self.current_day)
             except Exception:
                 self.log("结果已核验，但本地完成记录未保存；下次仍会先查询学校记录。")
-        elif result.needs_user and self.current_mode != "check" and self.enabled:
-            self.paused_day = self.current_day
-            self.log("本日自动重试已暂停，请处理上述问题；每日定时保持开启，次日将重新检查。处理后也可点击开始定时重试。", "attention")
         if self.enabled:
             at = now_cn()
             self.load_schedule_day(at)
             self.next_attempt = (at + timedelta(minutes=self.settings.retry_minutes)
-                                 if (self.current_mode == "check" or not result.completed and not result.needs_user)
+                                 if (self.current_mode == "check" or not result.completed)
                                  and self.current_day == at.date().isoformat()
                                  else None)
             self.refresh_next_attempt(at)
             if result.completed and self.current_mode != "check":
                 self.status.set(result.message + " 每日定时继续运行。")
                 self.log("本日任务已完成，每日定时保持开启；" + self.next_text.get())
-            elif result.needs_user and self.current_mode != "check":
-                self.status.set(result.message + " 本日重试已暂停，每日定时继续运行。")
-                self.log(self.next_text.get())
+            elif self.current_mode != "check":
+                self.status.set(result.message + " 定时继续运行。")
+                self.log("本次未完成，将按设定间隔继续检查（不超过当日截止时间）；" + self.next_text.get())
         else:
             self.set_awake(False)
 
@@ -482,7 +477,7 @@ class App:
     def refresh_next_attempt(self, at):
         day = at.date().isoformat()
         self.next_attempt = self.settings.next_run(
-            at, finished=self.completed_day == day or self.paused_day == day,
+            at, finished=self.completed_day == day,
             retry_at=self.next_attempt)
         self.next_text.set("下一次检查：" + self.next_attempt.strftime("%m月%d日 %H:%M") + "（北京时间）")
 

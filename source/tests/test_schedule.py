@@ -79,13 +79,17 @@ class DailyScheduleTests(unittest.TestCase):
             self.run_at(moment(day), RunResult(code, 'Offline completed task', completed=True))
             self.assert_continuing(moment(day + 1))
 
-    def test_attention_pauses_today_but_keeps_tomorrow_enabled(self):
-        self.run_at(moment(19), RunResult('location', 'Offline location unavailable', needs_user=True))
-        self.assert_continuing(moment(20))
-        self.tick_at(moment(19, 22)).assert_not_called()
-        self.tick_at(moment(20, 20, 59)).assert_not_called()
-        self.run_at(moment(20), RunResult('success', 'Offline success', completed=True))
-        self.assert_continuing(moment(21))
+    def test_attention_results_keep_retrying_until_success(self):
+        for day, code in enumerate(('menu_missing', 'location', 'credentials', 'manual_login', 'internal'), 19):
+            with self.subTest(code=code):
+                self.run_at(moment(day), RunResult(code, 'Offline temporary problem', needs_user=True))
+                self.assert_continuing(moment(day, 21, 5))
+                self.tick_at(moment(day, 21, 4)).assert_not_called()
+                self.run_at(moment(day, 21, 5), RunResult(code, 'Offline repeated problem', needs_user=True))
+                self.assert_continuing(moment(day, 21, 10))
+                self.run_at(moment(day, 21, 10), RunResult('success', 'Offline success', completed=True))
+                self.assert_continuing(moment(day + 1))
+                self.tick_at(moment(day, 22)).assert_not_called()
 
     def test_explicit_restart_can_retry_after_attention_today(self):
         self.run_at(moment(19), RunResult('login', 'Offline account issue', needs_user=True))
@@ -141,8 +145,49 @@ class DailyScheduleTests(unittest.TestCase):
         self.app.current_day = moment(19).date().isoformat()
         with patch('app.now_cn', return_value=moment(19)):
             self.app.handle_result(RunResult('location', 'Offline check issue', needs_user=True))
-        self.assertEqual(self.app.paused_day, '')
         self.assert_continuing(moment(19, 21, 5))
+
+    def test_missing_menu_retries_at_custom_interval_in_background(self):
+        self.app.retry.set('2')
+        self.app.start_schedule()
+        self.app.close()
+        with patch.object(self.app, 'show_window'), patch.object(self.root, 'bell'):
+            self.run_at(moment(22), RunResult('menu_missing', 'Offline missing menu', needs_user=True))
+            self.assert_continuing(moment(22, 21, 2))
+            self.tick_at(moment(22, 21, 1)).assert_not_called()
+            self.run_at(moment(22, 21, 2), RunResult('success', 'Offline success', completed=True))
+        self.assertTrue(self.app.tray.running)
+        self.assert_continuing(moment(23))
+
+    def test_attention_result_past_retry_cutoff_waits_until_tomorrow(self):
+        self.run_at(moment(22, 23, 24), RunResult('menu_missing', 'Offline missing menu', needs_user=True))
+        self.assert_continuing(moment(23))
+        self.tick_at(moment(22, 23, 25)).assert_not_called()
+        self.tick_at(moment(22, 23, 26)).assert_not_called()
+        self.tick_at(moment(23)).assert_called_once_with('scheduled')
+
+    def test_last_minute_still_allows_a_due_retry(self):
+        self.run_at(moment(22, 23, 20), RunResult('menu_missing', 'Offline missing menu', needs_user=True))
+        self.assert_continuing(moment(22, 23, 25))
+        self.run_at(moment(22, 23, 25), RunResult('menu_missing', 'Offline missing menu', needs_user=True))
+        self.assert_continuing(moment(23))
+        self.tick_at(moment(22, 23, 26)).assert_not_called()
+
+    def test_stop_during_retry_wait_cancels_future_attempts(self):
+        self.run_at(moment(22), RunResult('menu_missing', 'Offline missing menu', needs_user=True))
+        self.app.stop_schedule()
+        self.tick_at(moment(22, 21, 5)).assert_not_called()
+        self.tick_at(moment(23)).assert_not_called()
+        self.assertFalse(self.app.enabled)
+
+    def test_attention_result_after_stop_does_not_enable_schedule(self):
+        self.app.current_mode = 'scheduled'
+        self.app.current_day = moment(22).date().isoformat()
+        self.app.stop_schedule()
+        with patch('app.now_cn', return_value=moment(22)):
+            self.app.handle_result(RunResult('menu_missing', 'Offline late error', needs_user=True))
+        self.tick_at(moment(22, 21, 5)).assert_not_called()
+        self.assertFalse(self.store.settings().auto_start)
 
     def test_hidden_window_keeps_next_days_task_active(self):
         self.app.close()

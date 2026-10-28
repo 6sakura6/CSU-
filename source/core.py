@@ -94,8 +94,11 @@ class Settings:
     location_mode: str = "device"
     launch_at_login: bool = False
     startup_consent: str = ""
+    campus_network_enabled: bool = False
 
     def validate(self):
+        if type(self.campus_network_enabled) is not bool:
+            raise ValueError("校园网自动认证开关无效。")
         if self.location_mode not in ("device", "manual"):
             raise ValueError("定位方式无效，请重新打开定位设置。")
         if parse_time(self.end) < parse_time(self.start):

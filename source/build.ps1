@@ -14,6 +14,7 @@ New-Item -ItemType Directory -Path $buildRoot -Force | Out-Null
     --hidden-import pystray._win32 `
     --icon (Join-Path $PSScriptRoot 'assets\app.ico') `
     --add-data "$(Join-Path $PSScriptRoot 'assets\app.ico');assets" `
+    --add-data "$(Join-Path $PSScriptRoot 'THIRD_PARTY_NOTICES.md');." `
     --name '平安打卡助手' --distpath $distRoot --workpath $buildRoot `
     --specpath $buildRoot (Join-Path $PSScriptRoot 'app.py')
 if ($LASTEXITCODE -ne 0) { throw 'Application build failed.' }

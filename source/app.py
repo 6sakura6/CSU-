@@ -18,10 +18,11 @@ from tkinter import ttk, messagebox
 from core import Settings, now_cn, RunResult, ManualLocation
 from storage import Store, SingleInstance, app_dir, crypt, atomic_write
 from browser import BrowserRunner
+from campus_network import CampusNetwork, NetworkCredentials, CARRIERS, parse_portal_response
 from tray import SystemTray, ICON_PATH
 from startup import StartupRegistration, startup_is_authorized, self_test_registration
 
-VERSION = "1.0.10"
+VERSION = "1.0.11"
 DISCLAIMER_TEXT = "本程序仅供学习和测试使用。\n\n请在下载后 24 小时内删除。"
 STARTUP_CONSENT = hashlib.sha256(DISCLAIMER_TEXT.encode("utf-8")).hexdigest()
 
@@ -62,6 +63,8 @@ class App:
         self.messages = queue.Queue()
         self.stop_event = threading.Event()
         self.worker = None
+        self.campus_network = CampusNetwork(self.store, self.log)
+        self.network_dialog_open = False
         self.enabled = False
         self.closing = False
         self.closed = False
@@ -99,6 +102,7 @@ class App:
             login_enabled = False
         self.login_start = tk.BooleanVar(value=login_enabled)
         self.location_text = tk.StringVar(value=self.location_summary())
+        self.network_text = tk.StringVar(value=self.network_summary())
         self.status = tk.StringVar(value="等待配置")
         self.next_text = tk.StringVar(value="保存账户和时间后，点击开始定时。")
         self.saved_text = tk.StringVar(value="已保存账户；密码留空表示沿用已保存密码。" if username else "账户密码只在本机输入和加密保存。")
@@ -172,6 +176,9 @@ class App:
         ttk.Label(schedule, textvariable=self.location_text, style="Muted.TLabel").grid(row=3, column=0, columnspan=5, sticky="w", pady=(8, 0))
         self.location_button = ttk.Button(schedule, text="定位设置", command=self.configure_location)
         self.location_button.grid(row=3, column=5, pady=(8, 0))
+        ttk.Label(schedule, textvariable=self.network_text, style="Muted.TLabel").grid(row=5, column=0, columnspan=5, sticky="w", pady=(8, 0))
+        self.network_button = ttk.Button(schedule, text="校园网设置", command=self.configure_network)
+        self.network_button.grid(row=5, column=5, pady=(8, 0))
         self.login_start_button = ttk.Checkbutton(schedule, text="开机自启动（登录 Windows 后在托盘运行）",
                                                  style="Option.TCheckbutton", variable=self.login_start, command=self.toggle_login_start)
         self.login_start_button.grid(row=4, column=0, columnspan=6, sticky="w", pady=(8, 0))
@@ -210,6 +217,92 @@ class App:
 
     def set_awake(self, active):
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000001 if active else 0x80000000)
+
+    def network_summary(self):
+        return "校园网：打卡前自动检查与认证已开启" if self.settings.campus_network_enabled else "校园网：自动认证未开启"
+
+    def configure_network(self):
+        if self.worker and self.worker.is_alive():
+            messagebox.showinfo("任务进行中", "请先停止并等待当前任务结束，再修改校园网设置。", parent=self.root)
+            return
+        saved = {}
+        try:
+            saved = self.store.load_secret("network.dat") or {}
+            if not isinstance(saved, dict):
+                saved = {}
+        except Exception:
+            self.log("校园网加密配置无法读取，请重新填写校园网账号和密码。", "attention")
+        dialog = tk.Toplevel(self.root)
+        dialog.title("校园网设置")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        content = ttk.Frame(dialog, style="Card.TFrame", padding=22)
+        content.pack(fill="both", expand=True)
+        content.columnconfigure(1, weight=1)
+        enabled = tk.BooleanVar(dialog, value=self.settings.campus_network_enabled)
+        username = tk.StringVar(dialog, value=saved.get("username", ""))
+        password = tk.StringVar(dialog)
+        label = next((label for label, key in CARRIERS.items() if key == saved.get("carrier")), "请选择认证类型")
+        carrier = tk.StringVar(dialog, value=label)
+        ttk.Label(content, text="校园网自动认证", style="Title.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 14))
+        ttk.Checkbutton(content, text="在每次检查／打卡前检查网络并按需认证", variable=enabled,
+                        style="Option.TCheckbutton").grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 14))
+        for row, title, variable in ((2, "校园网账号", username), (3, "校园网密码", password)):
+            ttk.Label(content, text=title).grid(row=row, column=0, sticky="w", padx=(0, 16), pady=6)
+            ttk.Entry(content, textvariable=variable, width=36, show="●" if row == 3 else "").grid(row=row, column=1, sticky="ew", pady=6)
+        ttk.Label(content, text="认证类型").grid(row=4, column=0, sticky="w", pady=6)
+        ttk.Combobox(content, textvariable=carrier, values=list(CARRIERS), state="readonly", width=34).grid(row=4, column=1, sticky="ew", pady=6)
+        ttk.Label(content, text="无需运营商：保留原始账号；其他类型：使用对应运营商后缀。\n"
+                  "请按实际认证页面选择，不确定时先在浏览器核对。\n"
+                  "账号密码独立加密保存；同一账号的密码留空可沿用已保存密码。\n"
+                  "需先连接校园 Wi-Fi 或网线；此功能不切换 Wi-Fi。\n"
+                  "测试可能执行校园网认证，不会提交打卡；证书异常时停止认证。",
+                  style="Muted.TLabel", wraplength=480, justify="left").grid(row=5, column=0, columnspan=2, sticky="w", pady=(12, 16))
+
+        def save_network(test=False):
+            if self.worker and self.worker.is_alive():
+                messagebox.showinfo("任务进行中", "请等待当前任务结束再保存校园网设置。", parent=dialog)
+                return
+            try:
+                key = CARRIERS.get(carrier.get(), "")
+                user = username.get().strip()
+                secret = password.get()
+                preserve = bool(saved.get("password") and saved.get("username") == user)
+                if not secret and preserve:
+                    secret = saved["password"]
+                # Disabling is always possible, even when the old secret is corrupt.
+                if enabled.get() or test:
+                    credentials = NetworkCredentials(user, secret, key)
+                    credentials.account()
+                else:
+                    credentials = None
+                settings = replace(self.settings, campus_network_enabled=enabled.get()).validate()
+                if credentials:
+                    self.store.save_secret("network.dat", {"username": user, "password": secret, "carrier": key})
+                self.store.save_settings(settings)
+                self.settings = settings
+                self.campus_network.reset()
+                self.network_text.set(self.network_summary())
+                password.set("")
+                dialog.destroy()
+                self.log("校园网设置已保存。" + ("打卡前将自动检查网络。" if enabled.get() else "打卡前自动认证已关闭。"))
+                if test:
+                    self.launch("network")
+            except Exception as error:
+                message = str(error) if isinstance(error, ValueError) else "校园网设置保存失败，请检查本地文件权限。"
+                messagebox.showerror("无法保存校园网设置", message, parent=dialog)
+
+        actions = ttk.Frame(content, style="Card.TFrame")
+        actions.grid(row=6, column=0, columnspan=2, sticky="e")
+        ttk.Button(actions, text="取消", command=dialog.destroy).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="保存并测试连接", command=lambda: save_network(True)).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="保存设置", command=save_network).pack(side="left")
+        dialog.grab_set()
+        self.network_dialog_open = True
+        try:
+            self.root.wait_window(dialog)
+        finally:
+            self.network_dialog_open = False
 
     def update_schedule_button(self):
         self.start_button.configure(text="定时已启动" if self.enabled else "开始定时",
@@ -406,19 +499,29 @@ class App:
     def launch(self, mode):
         if self.worker and self.worker.is_alive():
             return
-        if mode != "scheduled" and not self.save(quiet=True):
+        if mode not in ("scheduled", "network") and not self.save(quiet=True):
             return
         self.current_mode, self.current_day = mode, now_cn().date().isoformat()
         self.stop_event = threading.Event()
         self.set_awake(True)
-        self.status.set("正在检查登录与定位…" if mode == "check" else "正在检查并执行打卡…")
-        for button in (self.save_button, self.start_button, self.check_button, self.run_button, self.location_button):
+        self.status.set("正在测试校园网连接…" if mode == "network" else "正在检查登录与定位…" if mode == "check" else "正在检查并执行打卡…")
+        for button in (self.save_button, self.start_button, self.check_button, self.run_button, self.location_button, self.network_button):
             button.configure(state="disabled")
-        self.log("开始仅检查（不会提交）。" if mode == "check" else "开始执行；先查询今天是否已经打卡。")
-        runner = BrowserRunner(self.store, self.settings, self.log, self.stop_event, scheduled=mode == "scheduled")
+        self.log("开始测试校园网（不会提交打卡）。" if mode == "network" else "开始仅检查（不会提交）。" if mode == "check" else "开始执行；先查询今天是否已经打卡。")
+        runner = None if mode == "network" else BrowserRunner(self.store, self.settings, self.log, self.stop_event, scheduled=mode == "scheduled")
+        network_enabled = self.settings.campus_network_enabled
         def work():
             try:
-                result = runner.run(dry_run=mode == "check")
+                result = None
+                if network_enabled or mode == "network":
+                    result = self.campus_network.ensure_online(self.stop_event)
+                    if mode != "network" and result.code == "campus_ready":
+                        self.log(result.message)
+                if mode != "network" and (result is None or result.code == "campus_ready"):
+                    if self.stop_event.is_set():
+                        result = RunResult("cancelled", "本次操作已停止。")
+                    else:
+                        result = runner.run(dry_run=mode == "check")
             except Exception:
                 result = RunResult("internal", "本次任务未完成，请检查运行环境后重试。", needs_user=True)
             self.messages.put(("result", result))
@@ -433,10 +536,16 @@ class App:
             self.root.after(100, lambda: self.handle_result(result))
             return
         self.worker = None
-        for button in (self.save_button, self.start_button, self.check_button, self.run_button, self.location_button):
+        for button in (self.save_button, self.start_button, self.check_button, self.run_button, self.location_button, self.network_button):
             button.configure(state="normal")
         self.log(result.message, "attention" if result.needs_user else "info")
         self.status.set(result.message)
+        if self.current_mode == "network":
+            # A network-only test must not mark check-in done or delay its schedule.
+            if not self.enabled:
+                self.set_awake(False)
+            self.update_schedule_button()
+            return
         if result.completed and self.current_mode != "check":
             self.completed_day = self.current_day
             try:
@@ -519,7 +628,7 @@ class App:
             if self.worker is None:
                 self.finish_close()
                 return
-        elif self.enabled and not self.worker:
+        elif self.enabled and not self.worker and not self.network_dialog_open:
             at = now_cn()
             self.load_schedule_day(at)
             self.refresh_next_attempt(at)
@@ -583,10 +692,15 @@ class App:
 def self_test():
     """Packaged-runtime test: no login, permissions or school submission."""
     result = {"version": VERSION, "encryption": False, "browser_driver": False, "system_tray": False,
-              "startup_registration": False}
+              "startup_registration": False, "campus_network": False}
     try:
         sample = b"packaged-dpapi-roundtrip"
         result["encryption"] = crypt(crypt(sample), decrypt=True) == sample
+        expected = {"campus": "runtime-check", "cmcc": "runtime-check@cmccn",
+                    "unicom": "runtime-check@unicomn", "telecom": "runtime-check@telecomn"}
+        result["campus_network"] = (all(NetworkCredentials("runtime-check", "offline", key).account() == value
+                                        for key, value in expected.items())
+                                    and parse_portal_response('csuStatus({"result":0});')["result"] == 0)
         result["startup_registration"] = self_test_registration()
         tray = SystemTray(lambda action: None)
         try:
@@ -603,7 +717,7 @@ def self_test():
     except Exception as error:
         result["error_type"] = type(error).__name__
     atomic_write(app_dir() / "data" / "self-test.json", json.dumps(result, indent=2).encode())
-    return 0 if all(result.get(key) for key in ("encryption", "browser_driver", "system_tray", "startup_registration")) else 1
+    return 0 if all(result.get(key) for key in ("encryption", "browser_driver", "system_tray", "startup_registration", "campus_network")) else 1
 
 
 def main():

@@ -114,16 +114,26 @@ class Settings:
         # The configured final minute is included, with no attempts after it.
         return parse_time(self.start) <= current <= parse_time(self.end).replace(second=59, microsecond=999999)
 
-    def next_run(self, at: datetime, *, finished=False, retry_at=None) -> datetime:
+    def random_delay_limit(self) -> int:
+        start, end = parse_time(self.start), parse_time(self.end)
+        return min(60, max(0, end.hour * 60 + end.minute - start.hour * 60 - start.minute))
+
+    def daily_start(self, day, delay_minutes=0) -> datetime:
+        if type(delay_minutes) is not int or not 0 <= delay_minutes <= 60:
+            raise ValueError("随机延迟须为 0 至 60 的整数分钟。")
+        return datetime.combine(day, parse_time(self.start), tzinfo=SHANGHAI) + timedelta(
+            minutes=min(delay_minutes, self.random_delay_limit()))
+
+    def next_run(self, at: datetime, *, finished=False, retry_at=None,
+                 delay_minutes=0, next_delay_minutes=0) -> datetime:
         at = at.astimezone(SHANGHAI)
-        start = datetime.combine(at.date(), parse_time(self.start), tzinfo=SHANGHAI)
+        start = self.daily_start(at.date(), delay_minutes)
+        tomorrow = self.daily_start(at.date() + timedelta(days=1), next_delay_minutes)
         cutoff = datetime.combine(at.date(), parse_time(self.end), tzinfo=SHANGHAI) + timedelta(minutes=1)
         if finished or at >= cutoff:
-            return start + timedelta(days=1)
-        if at < start:
-            return start
-        candidate = max(at, retry_at) if retry_at is not None else at
-        return candidate if candidate < cutoff else start + timedelta(days=1)
+            return tomorrow
+        candidate = max(at, start, retry_at) if retry_at is not None else max(at, start)
+        return candidate if candidate < cutoff else tomorrow
 
     def to_dict(self):
         return asdict(self)

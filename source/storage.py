@@ -8,6 +8,8 @@ import hashlib
 import json
 import os
 import sys
+import random
+from datetime import date
 from core import Settings, ManualLocation
 
 
@@ -115,6 +117,30 @@ class Store:
         completed = self.load_secret("completed.dat", {})
         completed[self.account_key()] = day
         self.save_secret("completed.dat", completed)
+
+    def schedule_delay(self, day, *, create=False, limit=60):
+        """Persist one draw per account/date. Reading a missing plan returns zero."""
+        if date.fromisoformat(day).isoformat() != day or type(limit) is not int or not 0 <= limit <= 60:
+            raise ValueError("随机排期的日期或范围无效。")
+        plans = self.load_secret("schedule.dat", {})
+        if not isinstance(plans, dict):
+            raise ValueError("随机排期文件格式无效。")
+        key = self.account_key()
+        days = plans.get(key, {})
+        if not isinstance(days, dict):
+            raise ValueError("随机排期记录格式无效。")
+        if day in days:
+            delay = days[day]
+            if type(delay) is not int or not 0 <= delay <= 60:
+                raise ValueError("随机排期延迟无效。")
+            return delay
+        if not create:
+            return 0
+        delay = random.randint(0, limit)
+        days[day] = delay
+        plans[key] = {saved_day: days[saved_day] for saved_day in sorted(days)[-32:]}
+        self.save_secret("schedule.dat", plans)
+        return delay
 
 
 class SingleInstance:

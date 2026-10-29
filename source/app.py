@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import ctypes
-from datetime import timedelta
+from datetime import date, timedelta
 from dataclasses import replace
 import json
 import hashlib
@@ -16,14 +16,14 @@ import time
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from core import Settings, now_cn, RunResult, ManualLocation
+from core import Settings, now_cn, RunResult, ManualLocation, SHANGHAI
 from storage import Store, SingleInstance, app_dir, crypt, atomic_write
 from browser import BrowserRunner
 from campus_network import CampusNetwork, NetworkCredentials, CARRIERS, parse_portal_response
 from tray import SystemTray, ICON_PATH
 from startup import StartupRegistration, startup_is_authorized, self_test_registration
 
-VERSION = "1.0.12"
+VERSION = "1.0.13"
 NETWORK_CHECK_SECONDS = 60 * 60
 NETWORK_MODES = ("network", "network_auto")
 DISCLAIMER_TEXT = "本程序仅供学习和测试使用。\n\n请在下载后 24 小时内删除。"
@@ -77,6 +77,8 @@ class App:
         self.next_attempt = None
         self.completed_day = ""
         self.checked_day = ""
+        self.daily_delays = {}
+        self.prepared_days = set()
         self.current_mode = ""
         self.current_day = ""
         self.logger = logging.getLogger("peace-checkin")
@@ -170,13 +172,13 @@ class App:
         schedule = ttk.Frame(outer, style="Card.TFrame", padding=17)
         schedule.pack(fill="x", pady=(0, 12))
         ttk.Label(schedule, text="每日执行时间", style="Title.TLabel").grid(row=0, column=0, columnspan=6, sticky="w", pady=(0, 13))
-        ttk.Label(schedule, text="打卡时间").grid(row=1, column=0, padx=(0, 8))
+        ttk.Label(schedule, text="基准时间").grid(row=1, column=0, padx=(0, 8))
         ttk.Entry(schedule, textvariable=self.start_time, width=8).grid(row=1, column=1, padx=(0, 23))
         ttk.Label(schedule, text="重试截止").grid(row=1, column=2, padx=(0, 8))
         ttk.Entry(schedule, textvariable=self.end_time, width=8).grid(row=1, column=3, padx=(0, 23))
         ttk.Label(schedule, text="重试间隔（分钟）").grid(row=1, column=4, padx=(0, 8))
         ttk.Spinbox(schedule, textvariable=self.retry, from_=1, to=60, width=5).grid(row=1, column=5)
-        ttk.Label(schedule, text="每天重新读取学校开放时段；超出学校时段不提交。时间格式为 HH:MM。", style="Muted.TLabel").grid(row=2, column=0, columnspan=6, sticky="w", pady=(11, 0))
+        ttk.Label(schedule, text="当天完成后为次日生成 0–60 分钟随机延迟；实际时间见下方。仍按学校时段执行。", style="Muted.TLabel").grid(row=2, column=0, columnspan=6, sticky="w", pady=(11, 0))
         ttk.Label(schedule, textvariable=self.location_text, style="Muted.TLabel").grid(row=3, column=0, columnspan=5, sticky="w", pady=(8, 0))
         self.location_button = ttk.Button(schedule, text="定位设置", command=self.configure_location)
         self.location_button.grid(row=3, column=5, pady=(8, 0))
@@ -460,9 +462,13 @@ class App:
                 self.store.save_credentials(user, password)
                 if not existing or existing["username"] != user:
                     self.completed_day, self.checked_day = "", ""
+                    self.daily_delays.clear()
+                    self.prepared_days.clear()
             elif not existing or existing["username"] != user:
                 raise ValueError("首次保存或更换账户时，请填写密码。")
             self.store.save_settings(settings)
+            if (settings.start, settings.end) != (self.settings.start, self.settings.end):
+                self.next_attempt = None
             self.settings = settings
             self.password.set("")
             self.saved_text.set("账户密码已加密保存；密码留空表示沿用已保存密码。")
@@ -495,7 +501,7 @@ class App:
         self.set_awake(True)
         self.update_schedule_button()
         self.status.set("定时已启动")
-        self.log(f"每天 {self.settings.start} 开始，失败后每 {self.settings.retry_minutes} 分钟重试，至 {self.settings.end} 截止。")
+        self.log(f"每日基准时间 {self.settings.start}，完成后为次日保存随机延迟；失败后每 {self.settings.retry_minutes} 分钟重试，至 {self.settings.end} 截止。")
 
     def stop_schedule(self):
         self.enabled = False
@@ -568,6 +574,12 @@ class App:
                 self.store.mark_done(self.current_day)
             except Exception:
                 self.log("结果已核验，但本地完成记录未保存；下次仍会先查询学校记录。")
+            try:
+                tomorrow = date.fromisoformat(self.current_day) + timedelta(days=1)
+                self.day_delay(tomorrow, create=True)
+            except Exception:
+                self.schedule_error()
+                return
         if self.enabled:
             at = now_cn()
             self.load_schedule_day(at)
@@ -575,7 +587,8 @@ class App:
                                  if (self.current_mode == "check" or not result.completed)
                                  and self.current_day == at.date().isoformat()
                                  else None)
-            self.refresh_next_attempt(at)
+            if not self.refresh_next_attempt(at):
+                return
             if result.completed and self.current_mode != "check":
                 self.status.set(result.message + " 每日定时继续运行。")
                 self.log("本日任务已完成，每日定时保持开启；" + self.next_text.get())
@@ -599,12 +612,42 @@ class App:
             except Exception:
                 self.log("本地完成记录不可用，将以学校服务端状态为准。")
 
+    def day_delay(self, day, *, create=False):
+        key = day.isoformat()
+        if key not in self.daily_delays or (create and key not in self.prepared_days):
+            self.daily_delays[key] = self.store.schedule_delay(
+                key, create=create, limit=self.settings.random_delay_limit())
+            if create:
+                self.prepared_days.add(key)
+        return min(self.daily_delays[key], self.settings.random_delay_limit())
+
+    def schedule_error(self):
+        # Never replace an unreadable saved draw with a new random time.
+        self.enabled = False
+        self.next_attempt = None
+        self.set_awake(False)
+        self.update_schedule_button()
+        self.status.set("随机排期无法读取或保存，已停止打卡定时。")
+        self.next_text.set("请检查 data 目录权限及原 Windows 账户后重新开始定时。")
+        self.log("随机排期无法读取或保存，已停止打卡定时，避免重启或重试时变更排期。", "attention")
+
     def refresh_next_attempt(self, at):
-        day = at.date().isoformat()
-        self.next_attempt = self.settings.next_run(
-            at, finished=self.completed_day == day,
-            retry_at=self.next_attempt)
-        self.next_text.set("下一次检查：" + self.next_attempt.strftime("%m月%d日 %H:%M") + "（北京时间）")
+        at = at.astimezone(SHANGHAI)
+        day = at.date()
+        try:
+            if self.completed_day == day.isoformat():
+                self.day_delay(day + timedelta(days=1), create=True)
+            candidate = self.settings.next_run(at, finished=self.completed_day == day.isoformat(),
+                retry_at=self.next_attempt, delay_minutes=self.day_delay(day))
+            delay = self.day_delay(candidate.date())
+            self.next_attempt = self.settings.next_run(at, finished=self.completed_day == day.isoformat(),
+                retry_at=self.next_attempt, delay_minutes=self.day_delay(day), next_delay_minutes=delay)
+        except Exception:
+            self.schedule_error()
+            return False
+        self.next_text.set("下一次检查：" + self.next_attempt.strftime("%m月%d日 %H:%M") +
+                           f"（北京时间；当日随机延迟 {delay} 分钟）")
+        return True
 
     def tick(self):
         if self.closed:
@@ -653,8 +696,7 @@ class App:
             elif self.enabled:
                 at = now_cn()
                 self.load_schedule_day(at)
-                self.refresh_next_attempt(at)
-                if at >= self.next_attempt:
+                if self.refresh_next_attempt(at) and at >= self.next_attempt:
                     self.launch("scheduled")
         self.root.after(300, self.tick)
 

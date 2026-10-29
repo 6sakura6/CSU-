@@ -164,7 +164,7 @@ class CampusNetwork:
                 check_cancel()
                 if reachable:
                     return RunResult("campus_ready", "校园网认证成功，学工系统连通性复核通过。")
-            return RunResult("campus_service", "校园网返回认证成功，但学工系统仍不可达，将按打卡重试间隔再次检查。")
+            return RunResult("campus_service", "校园网返回认证成功，但学工系统仍不可达，将在下次校园网检测时再次检查。")
         except Cancelled:
             return RunResult("cancelled", "校园网检查已停止。")
         except Exception:

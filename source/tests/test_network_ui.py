@@ -1,9 +1,10 @@
 """Network configuration and check-in sequencing use offline mocks only."""
-from datetime import timedelta
+from datetime import datetime, timedelta
 import gc
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import tkinter as tk
 from tkinter import ttk
 import unittest
@@ -11,7 +12,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import App
-from core import RunResult, now_cn
+from core import RunResult, now_cn, SHANGHAI
 from storage import Store
 from test_tray import FakeTray
 
@@ -29,6 +30,11 @@ class NetworkUiTests(unittest.TestCase):
         self.root = tk.Tk()
         self.store = Store(Path(self.directory.name))
         self.app = App(self.root, self.store, tray_factory=FakeTray)
+        self.network_mock = patch.object(self.app.campus_network, 'ensure_online',
+                                         return_value=RunResult('campus_ready', 'Offline connected'))
+        self.ensure_online = self.network_mock.start()
+        self.addCleanup(self.network_mock.stop)
+        self.app.next_network_check = float('inf')
         self.root.update_idletasks()
 
     def tearDown(self):
@@ -185,21 +191,17 @@ class NetworkUiTests(unittest.TestCase):
         self.assertFalse(self.app.settings.campus_network_enabled)
         self.assertEqual(self.store.load_secret('network.dat')['carrier'], 'cmcc')
 
-    def test_preflight_failure_prevents_checkin_then_recovery_allows_it(self):
+    def test_checkin_retries_do_not_trigger_extra_network_checks(self):
         self.app.settings.campus_network_enabled = True
         self.app.username.set('offline-checkin')
         self.app.password.set('offline-secret')
-        for network_code, called in (('campus_unavailable', False), ('campus_rejected', False), ('campus_ready', True)):
+        for code in ('network', 'credentials', 'checked'):
             self.app.password.set('offline-secret')
-            events = []
-            def ensure(stop):
-                events.append('network')
-                return RunResult(network_code, 'Offline network result')
-            with patch.object(self.app.campus_network, 'ensure_online', side_effect=ensure), patch('app.BrowserRunner') as browser:
-                browser.return_value.run.side_effect = lambda **kwargs: (events.append('checkin') or RunResult('checked', 'Offline check'))
+            with patch('app.BrowserRunner') as browser:
+                browser.return_value.run.return_value = RunResult(code, 'Offline check')
                 self.run_worker('check')
-                self.assertEqual(browser.return_value.run.called, called)
-                self.assertEqual(events, ['network', 'checkin'] if called else ['network'])
+                browser.return_value.run.assert_called_once_with(dry_run=True)
+        self.ensure_online.assert_not_called()
 
     def test_disabled_preflight_does_not_touch_network(self):
         self.app.username.set('offline-checkin')
@@ -210,16 +212,134 @@ class NetworkUiTests(unittest.TestCase):
             ensure.assert_not_called()
             browser.return_value.run.assert_called_once_with(dry_run=True)
 
-    def test_stop_after_preflight_never_starts_browser_operations(self):
+    def test_hourly_checks_run_without_checkin_account_or_timer(self):
         self.app.settings.campus_network_enabled = True
+        self.app.next_network_check = 100
+        morning = datetime(2026, 10, 29, 8, tzinfo=SHANGHAI)
+        with patch('app.BrowserRunner') as browser, patch('app.now_cn', return_value=morning):
+            for value, expected_calls in ((100, 1), (3699, 1), (3700, 2)):
+                with patch('app.time.monotonic', return_value=value):
+                    self.app.tick()
+                    if self.app.worker:
+                        self.app.worker.join(3)
+                        self.app.tick()
+                    self.assertEqual(self.ensure_online.call_count, expected_calls)
+            browser.assert_not_called()
+        self.assertFalse(self.app.enabled)
+        self.assertIsNone(self.store.credentials())
+        self.assertEqual(self.app.next_network_check, 7300)
+
+    def test_hourly_failure_and_manual_test_both_wait_an_hour(self):
+        self.app.settings.campus_network_enabled = True
+        self.ensure_online.return_value = RunResult('campus_unavailable', 'Offline unavailable')
+        with patch('app.time.monotonic', return_value=200):
+            self.run_worker('network_auto')
+        self.assertEqual(self.app.next_network_check, 3800)
+        with patch('app.time.monotonic', return_value=3799), patch.object(self.app, 'launch') as launch:
+            self.app.tick()
+            launch.assert_not_called()
+        with patch('app.time.monotonic', return_value=300):
+            self.run_worker('network')
+        self.assertEqual(self.app.next_network_check, 3900)
+
+    def test_sleep_skips_missed_hours_without_catchup(self):
+        self.app.settings.campus_network_enabled = True
+        self.app.next_network_check = 1
+        with patch('app.time.monotonic', return_value=25000):
+            self.app.tick()
+            self.app.worker.join(3)
+            self.app.tick()
+        self.ensure_online.assert_called_once()
+        self.assertEqual(self.app.next_network_check, 28600)
+
+    def test_stopping_checkin_keeps_hourly_checks_and_disabled_network_stops_them(self):
+        self.app.settings.campus_network_enabled = True
+        self.app.stop_schedule()
+        self.app.next_network_check = 0
+        with patch.object(self.app, 'launch') as launch:
+            self.app.tick()
+            launch.assert_called_once_with('network_auto')
+        self.app.settings.campus_network_enabled = False
+        with patch.object(self.app, 'launch') as launch:
+            self.app.tick()
+            launch.assert_not_called()
+
+    def test_finished_checkin_and_hidden_window_do_not_stop_hourly_checks(self):
+        self.app.settings.campus_network_enabled = True
+        self.app.completed_day = now_cn().date().isoformat()
+        self.app.close()
+        self.app.next_network_check = 0
+        with patch.object(self.app, 'launch') as launch:
+            self.app.tick()
+            launch.assert_called_once_with('network_auto')
+        self.assertTrue(self.app.hidden)
+
+    def test_busy_worker_defers_network_and_exit_prevents_it(self):
+        self.app.settings.campus_network_enabled = True
+        self.app.next_network_check = 0
+        release = threading.Event()
+        self.app.worker = threading.Thread(target=lambda: release.wait(3))
+        self.app.worker.start()
+        try:
+            with patch.object(self.app, 'launch') as launch:
+                self.app.tick()
+                launch.assert_not_called()
+        finally:
+            release.set()
+            self.app.worker.join(3)
+            self.app.worker = None
+        with patch.object(self.app, 'launch') as launch:
+            self.app.tick()
+            launch.assert_called_once_with('network_auto')
+        self.app.closing = True
+        with patch.object(self.app, 'launch') as launch:
+            self.app.tick()
+            launch.assert_not_called()
+
+    def test_due_network_runs_first_then_due_checkin(self):
+        self.app.settings.campus_network_enabled = True
+        self.app.next_network_check = 100
+        self.app.enabled = True
+        self.app.start_time.set('21:00')
+        self.app.settings.start = '21:00'
+        at = datetime(2026, 10, 29, 21, tzinfo=SHANGHAI)
+        with patch('app.time.monotonic', return_value=100), patch('app.now_cn', return_value=at):
+            self.app.tick()
+            self.app.worker.join(3)
+            with patch.object(self.app, 'launch') as launch:
+                self.app.tick()
+                launch.assert_called_once_with('scheduled')
+        self.assertEqual(self.app.next_network_check, 3700)
+
+    def test_startup_restores_checkin_after_initial_network_check(self):
+        self.app.settings.campus_network_enabled = True
+        self.app.settings.auto_start = True
         self.app.username.set('offline-checkin')
         self.app.password.set('offline-secret')
-        def ensure(stop):
-            stop.set()
-            return RunResult('campus_ready', 'Offline connected')
-        with patch.object(self.app.campus_network, 'ensure_online', side_effect=ensure), patch('app.BrowserRunner') as browser:
-            self.run_worker('check')
-            browser.return_value.run.assert_not_called()
+        release = threading.Event()
+        self.ensure_online.side_effect = lambda stop: (release.wait(2) or None) and RunResult('campus_ready', 'Offline connected')
+        self.app.launch('network_auto')
+        self.root.after(20, self.app.restore_schedule)
+        self.root.after(70, release.set)
+        self.root.after(480, self.root.quit)
+        noon = datetime(2026, 10, 29, 12, tzinfo=SHANGHAI)
+        try:
+            with patch('app.now_cn', return_value=noon):
+                self.root.mainloop()
+        finally:
+            release.set()
+            if self.app.worker:
+                self.app.worker.join(3)
+                self.app.tick()
+        self.assertTrue(self.app.enabled)
+        self.assertTrue(self.store.settings().auto_start)
+
+    def test_stopped_timer_is_not_restored_by_pending_startup_callback(self):
+        self.app.settings.auto_start = True
+        self.app.stop_schedule()
+        with patch.object(self.app, 'start_schedule') as start:
+            self.app.restore_schedule()
+            start.assert_not_called()
 
 
 if __name__ == '__main__':

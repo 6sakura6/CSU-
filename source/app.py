@@ -12,6 +12,7 @@ from pathlib import Path
 import queue
 import sys
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -22,7 +23,9 @@ from campus_network import CampusNetwork, NetworkCredentials, CARRIERS, parse_po
 from tray import SystemTray, ICON_PATH
 from startup import StartupRegistration, startup_is_authorized, self_test_registration
 
-VERSION = "1.0.11"
+VERSION = "1.0.12"
+NETWORK_CHECK_SECONDS = 60 * 60
+NETWORK_MODES = ("network", "network_auto")
 DISCLAIMER_TEXT = "本程序仅供学习和测试使用。\n\n请在下载后 24 小时内删除。"
 STARTUP_CONSENT = hashlib.sha256(DISCLAIMER_TEXT.encode("utf-8")).hexdigest()
 
@@ -91,6 +94,7 @@ class App:
         except Exception:
             username = ""
             load_error = "本地配置无法读取，请重新填写并保存。加密文件只能由原 Windows 账户读取。"
+        self.next_network_check = time.monotonic() if self.settings.campus_network_enabled else None
         self.username = tk.StringVar(value=username)
         self.password = tk.StringVar()
         self.start_time = tk.StringVar(value=self.settings.start)
@@ -113,7 +117,7 @@ class App:
         else:
             self.log("程序已就绪。使用北京时间；验证码出现时请在弹出的浏览器处理。")
         if self.settings.auto_start and username:
-            self.root.after(700, self.start_schedule)
+            self.root.after(700, self.restore_schedule)
         self.root.after(200, self.tick)
 
     def build_ui(self):
@@ -219,7 +223,7 @@ class App:
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000001 if active else 0x80000000)
 
     def network_summary(self):
-        return "校园网：打卡前自动检查与认证已开启" if self.settings.campus_network_enabled else "校园网：自动认证未开启"
+        return "校园网：每小时自动检测并按需认证" if self.settings.campus_network_enabled else "校园网：自动认证未开启"
 
     def configure_network(self):
         if self.worker and self.worker.is_alive():
@@ -245,7 +249,7 @@ class App:
         label = next((label for label, key in CARRIERS.items() if key == saved.get("carrier")), "请选择认证类型")
         carrier = tk.StringVar(dialog, value=label)
         ttk.Label(content, text="校园网自动认证", style="Title.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 14))
-        ttk.Checkbutton(content, text="在每次检查／打卡前检查网络并按需认证", variable=enabled,
+        ttk.Checkbutton(content, text="每小时检测校园网并按需认证（独立于打卡定时）", variable=enabled,
                         style="Option.TCheckbutton").grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 14))
         for row, title, variable in ((2, "校园网账号", username), (3, "校园网密码", password)):
             ttk.Label(content, text=title).grid(row=row, column=0, sticky="w", padx=(0, 16), pady=6)
@@ -256,6 +260,7 @@ class App:
                   "请按实际认证页面选择，不确定时先在浏览器核对。\n"
                   "账号密码独立加密保存；同一账号的密码留空可沿用已保存密码。\n"
                   "需先连接校园 Wi-Fi 或网线；此功能不切换 Wi-Fi。\n"
+                  "开启后先检测一次，之后每小时检测；程序需保持运行。\n"
                   "测试可能执行校园网认证，不会提交打卡；证书异常时停止认证。",
                   style="Muted.TLabel", wraplength=480, justify="left").grid(row=5, column=0, columnspan=2, sticky="w", pady=(12, 16))
 
@@ -282,10 +287,11 @@ class App:
                 self.store.save_settings(settings)
                 self.settings = settings
                 self.campus_network.reset()
+                self.next_network_check = time.monotonic() if settings.campus_network_enabled else None
                 self.network_text.set(self.network_summary())
                 password.set("")
                 dialog.destroy()
-                self.log("校园网设置已保存。" + ("打卡前将自动检查网络。" if enabled.get() else "打卡前自动认证已关闭。"))
+                self.log("校园网设置已保存。" + ("将独立每小时检测，首次检测即将开始。" if enabled.get() else "每小时自动检测已关闭。"))
                 if test:
                     self.launch("network")
             except Exception as error:
@@ -468,6 +474,15 @@ class App:
             messagebox.showerror("无法保存", message, parent=self.root)
             return False
 
+    def restore_schedule(self):
+        if self.closing or self.closed or not self.settings.auto_start:
+            return
+        if self.worker or self.network_dialog_open:
+            # The initial network check may still be using the shared worker.
+            self.root.after(300, self.restore_schedule)
+            return
+        self.start_schedule()
+
     def start_schedule(self):
         if self.worker and self.worker.is_alive():
             return
@@ -494,30 +509,31 @@ class App:
         self.set_awake(False)
         self.status.set("正在停止…" if self.worker and self.worker.is_alive() else "定时已停止")
         self.next_text.set("点击开始定时可恢复。")
-        self.log("已停止定时，并请求停止当前操作。")
+        self.log("已停止打卡定时，并请求停止当前操作。" +
+                 ("校园网每小时检测仍开启，可在校园网设置中关闭。" if self.settings.campus_network_enabled else ""))
 
     def launch(self, mode):
         if self.worker and self.worker.is_alive():
             return
-        if mode not in ("scheduled", "network") and not self.save(quiet=True):
+        if mode not in ("scheduled", *NETWORK_MODES) and not self.save(quiet=True):
             return
         self.current_mode, self.current_day = mode, now_cn().date().isoformat()
         self.stop_event = threading.Event()
         self.set_awake(True)
-        self.status.set("正在测试校园网连接…" if mode == "network" else "正在检查登录与定位…" if mode == "check" else "正在检查并执行打卡…")
+        network_only = mode in NETWORK_MODES
+        if network_only and self.settings.campus_network_enabled:
+            # One hour between starts; missed hours never trigger catch-up bursts.
+            self.next_network_check = time.monotonic() + NETWORK_CHECK_SECONDS
+        self.status.set("正在每小时检测校园网…" if mode == "network_auto" else "正在测试校园网连接…" if mode == "network" else "正在检查登录与定位…" if mode == "check" else "正在检查并执行打卡…")
         for button in (self.save_button, self.start_button, self.check_button, self.run_button, self.location_button, self.network_button):
             button.configure(state="disabled")
-        self.log("开始测试校园网（不会提交打卡）。" if mode == "network" else "开始仅检查（不会提交）。" if mode == "check" else "开始执行；先查询今天是否已经打卡。")
-        runner = None if mode == "network" else BrowserRunner(self.store, self.settings, self.log, self.stop_event, scheduled=mode == "scheduled")
-        network_enabled = self.settings.campus_network_enabled
+        self.log("开始每小时校园网检测（不会提交打卡）。" if mode == "network_auto" else "开始测试校园网（不会提交打卡）。" if mode == "network" else "开始仅检查（不会提交）。" if mode == "check" else "开始执行；先查询今天是否已经打卡。")
+        runner = None if network_only else BrowserRunner(self.store, self.settings, self.log, self.stop_event, scheduled=mode == "scheduled")
         def work():
             try:
-                result = None
-                if network_enabled or mode == "network":
+                if network_only:
                     result = self.campus_network.ensure_online(self.stop_event)
-                    if mode != "network" and result.code == "campus_ready":
-                        self.log(result.message)
-                if mode != "network" and (result is None or result.code == "campus_ready"):
+                else:
                     if self.stop_event.is_set():
                         result = RunResult("cancelled", "本次操作已停止。")
                     else:
@@ -540,7 +556,7 @@ class App:
             button.configure(state="normal")
         self.log(result.message, "attention" if result.needs_user else "info")
         self.status.set(result.message)
-        if self.current_mode == "network":
+        if self.current_mode in NETWORK_MODES:
             # A network-only test must not mark check-in done or delay its schedule.
             if not self.enabled:
                 self.set_awake(False)
@@ -628,12 +644,18 @@ class App:
             if self.worker is None:
                 self.finish_close()
                 return
-        elif self.enabled and not self.worker and not self.network_dialog_open:
-            at = now_cn()
-            self.load_schedule_day(at)
-            self.refresh_next_attempt(at)
-            if at >= self.next_attempt:
-                self.launch("scheduled")
+        elif not self.worker and not self.network_dialog_open:
+            # Network maintenance runs outside check-in windows, even if the
+            # check-in timer is stopped or today's check-in is already complete.
+            if (self.settings.campus_network_enabled and
+                    (self.next_network_check is None or time.monotonic() >= self.next_network_check)):
+                self.launch("network_auto")
+            elif self.enabled:
+                at = now_cn()
+                self.load_schedule_day(at)
+                self.refresh_next_attempt(at)
+                if at >= self.next_attempt:
+                    self.launch("scheduled")
         self.root.after(300, self.tick)
 
     def close(self):

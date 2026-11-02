@@ -23,7 +23,7 @@ from campus_network import CampusNetwork, NetworkCredentials, CARRIERS, parse_po
 from tray import SystemTray, ICON_PATH
 from startup import StartupRegistration, startup_is_authorized, self_test_registration
 
-VERSION = "1.0.13"
+VERSION = "1.0.14"
 NETWORK_CHECK_SECONDS = 60 * 60
 NETWORK_MODES = ("network", "network_auto")
 DISCLAIMER_TEXT = "本程序仅供学习和测试使用。\n\n请在下载后 24 小时内删除。"
@@ -66,7 +66,7 @@ class App:
         self.messages = queue.Queue()
         self.stop_event = threading.Event()
         self.worker = None
-        self.campus_network = CampusNetwork(self.store, self.log)
+        self.campus_network = CampusNetwork(self.store, self.network_log)
         self.network_dialog_open = False
         self.enabled = False
         self.closing = False
@@ -220,6 +220,12 @@ class App:
     def log(self, text, kind="info"):
         # Safe to call from the browser worker; Tk is only touched on the UI thread.
         self.messages.put(("log", (text, kind)))
+
+    def network_log(self, text):
+        # Routine probes stay in activity.log; a confirmed offline state makes
+        # subsequent recovery messages visible. Manual tests always show progress.
+        quiet = self.current_mode == "network_auto" and not self.campus_network.offline_detected
+        self.log(text, "background" if quiet else "info")
 
     def set_awake(self, active):
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000001 if active else 0x80000000)
@@ -530,10 +536,12 @@ class App:
         if network_only and self.settings.campus_network_enabled:
             # One hour between starts; missed hours never trigger catch-up bursts.
             self.next_network_check = time.monotonic() + NETWORK_CHECK_SECONDS
-        self.status.set("正在每小时检测校园网…" if mode == "network_auto" else "正在测试校园网连接…" if mode == "network" else "正在检查登录与定位…" if mode == "check" else "正在检查并执行打卡…")
+        if mode != "network_auto":
+            self.status.set("正在测试校园网连接…" if mode == "network" else "正在检查登录与定位…" if mode == "check" else "正在检查并执行打卡…")
         for button in (self.save_button, self.start_button, self.check_button, self.run_button, self.location_button, self.network_button):
             button.configure(state="disabled")
-        self.log("开始每小时校园网检测（不会提交打卡）。" if mode == "network_auto" else "开始测试校园网（不会提交打卡）。" if mode == "network" else "开始仅检查（不会提交）。" if mode == "check" else "开始执行；先查询今天是否已经打卡。")
+        self.log("开始每小时校园网检测（不会提交打卡）。" if mode == "network_auto" else "开始测试校园网（不会提交打卡）。" if mode == "network" else "开始仅检查（不会提交）。" if mode == "check" else "开始执行；先查询今天是否已经打卡。",
+                 "background" if mode == "network_auto" else "info")
         runner = None if network_only else BrowserRunner(self.store, self.settings, self.log, self.stop_event, scheduled=mode == "scheduled")
         def work():
             try:
@@ -560,8 +568,12 @@ class App:
         self.worker = None
         for button in (self.save_button, self.start_button, self.check_button, self.run_button, self.location_button, self.network_button):
             button.configure(state="normal")
-        self.log(result.message, "attention" if result.needs_user else "info")
-        self.status.set(result.message)
+        quiet = (self.current_mode == "network_auto" and
+                 not self.campus_network.offline_detected and not result.needs_user and
+                 result.code in ("campus_ready", "campus_service", "cancelled"))
+        self.log(result.message, "background" if quiet else "attention" if result.needs_user else "info")
+        if not quiet:
+            self.status.set(result.message)
         if self.current_mode in NETWORK_MODES:
             # A network-only test must not mark check-in done or delay its schedule.
             if not self.enabled:
@@ -671,6 +683,8 @@ class App:
                     stamp = now_cn().strftime("%m-%d %H:%M:%S")
                     line = f"{stamp}  {text}"
                     self.logger.info(line)
+                    if level == "background":
+                        continue
                     self.log_text.configure(state="normal")
                     self.log_text.insert("end", line + "\n")
                     if int(self.log_text.index("end-1c").split(".")[0]) > 600:

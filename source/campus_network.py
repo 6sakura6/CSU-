@@ -71,9 +71,11 @@ class CampusNetwork:
     def __init__(self, store, log):
         self.store, self.log = store, log
         self.rejected = False
+        self.offline_detected = False
 
     def reset(self):
         self.rejected = False
+        self.offline_detected = False
 
     def _get(self, url):
         # Fixed HTTPS hosts, verified certificates, direct local network access.
@@ -105,6 +107,7 @@ class CampusNetwork:
         return False
 
     def ensure_online(self, stop):
+        self.offline_detected = False
         def check_cancel():
             if stop.is_set():
                 raise Cancelled()
@@ -130,6 +133,8 @@ class CampusNetwork:
                 return RunResult("campus_portal_changed", "校园网状态接口格式已变化，未发送凭据，请人工检查门户。", needs_user=True)
             if str(portal["result"]) == "1":
                 return RunResult("campus_service", "校园网显示已认证，但学工系统暂不可达；稍后重试，不重复登录校园网。")
+            self.offline_detected = True
+            self.log("已确认校园网未认证，学工系统不可达。")
             if self.rejected:
                 return RunResult("campus_rejected", "校园网认证曾被拒绝，请核对校园网账号、密码和认证类型并重新保存设置后再试。", needs_user=True)
             try:

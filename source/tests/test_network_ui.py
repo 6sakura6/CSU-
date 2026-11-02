@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import App
 from core import RunResult, now_cn, SHANGHAI
 from storage import Store
+from campus_network import CampusNetwork
 from test_tray import FakeTray
 
 
@@ -165,6 +166,88 @@ class NetworkUiTests(unittest.TestCase):
         self.app.worker.join(3)
         self.assertFalse(self.app.worker.is_alive())
         self.app.tick()
+
+    def run_network_fixture(self, mode, reachable, responses):
+        self.ensure_online.side_effect = lambda stop: CampusNetwork.ensure_online(self.app.campus_network, stop)
+        with patch.object(self.app.campus_network, 'school_reachable', side_effect=reachable), \
+             patch.object(self.app.campus_network, '_get', side_effect=responses):
+            self.run_worker(mode)
+
+    def visible_log(self):
+        return self.app.log_text.get('1.0', 'end')
+
+    def file_log(self):
+        for handler in self.app.logger.handlers:
+            handler.flush()
+        return (self.store.root / 'activity.log').read_text(encoding='utf-8')
+
+    def test_online_hourly_probe_is_file_only_and_preserves_status(self):
+        self.app.tick()
+        before = self.visible_log()
+        self.app.status.set('Offline check-in completed')
+        self.run_network_fixture('network_auto', [True], [])
+        self.assertEqual(self.visible_log(), before)
+        self.assertEqual(self.app.status.get(), 'Offline check-in completed')
+        log = self.file_log()
+        for text in ('开始每小时校园网检测', '正在检查学工系统连通性', '学工系统可访问，无需校园网认证'):
+            self.assertIn(text, log)
+
+    def test_confirmed_disconnect_and_recovery_are_visible_without_probe_noise(self):
+        self.store.save_secret('network.dat', {'username': 'offline-network', 'password': 'offline-secret', 'carrier': 'campus'})
+        self.app.tick()
+        self.run_network_fixture('network_auto', [False, True],
+                                 [(200, '{"result":0}', ''), (200, '{"result":1}', '')])
+        log = self.visible_log()
+        self.assertIn('已确认校园网未认证', log)
+        self.assertIn('正在按保存的认证类型登录', log)
+        self.assertIn('校园网认证成功', log)
+        self.assertNotIn('开始每小时校园网检测', log)
+        self.assertNotIn('正在检查学工系统连通性', log)
+        self.assertNotIn('正在检查中南大学校园网认证状态', log)
+        # A later healthy check must reset the preceding offline state.
+        before = log
+        self.run_network_fixture('network_auto', [True], [])
+        self.assertEqual(self.visible_log(), before)
+        self.assertFalse(self.app.campus_network.offline_detected)
+        self.assertIn('学工系统可访问，无需校园网认证', self.file_log())
+
+    def test_manual_network_test_still_shows_progress_and_result(self):
+        self.run_network_fixture('network', [True], [])
+        log = self.visible_log()
+        self.assertIn('开始测试校园网', log)
+        self.assertIn('正在检查学工系统连通性', log)
+        self.assertIn('学工系统可访问，无需校园网认证', log)
+        self.assertIn('学工系统可访问', self.app.status.get())
+
+    def test_connection_failure_is_visible_without_routine_probe_noise(self):
+        self.app.tick()
+        self.run_network_fixture('network_auto', [False], [(503, '', '')])
+        self.assertFalse(self.app.campus_network.offline_detected)
+        self.assertIn('校园网门户返回异常', self.visible_log())
+        self.assertNotIn('正在检查学工系统连通性', self.visible_log())
+        self.assertNotIn('已确认校园网未认证', self.visible_log())
+        self.assertIn('校园网门户返回异常', self.file_log())
+
+    def test_authenticated_portal_with_school_issue_is_file_only(self):
+        self.app.tick()
+        before = self.visible_log()
+        self.run_network_fixture('network_auto', [False], [(200, '{"result":1}', '')])
+        self.assertFalse(self.app.campus_network.offline_detected)
+        self.assertEqual(self.visible_log(), before)
+        self.assertIn('校园网显示已认证', self.file_log())
+
+    def test_background_probe_does_not_restore_hidden_window(self):
+        self.app.close()
+        with patch.object(self.app, 'show_window') as show, patch.object(self.root, 'bell') as bell:
+            self.run_network_fixture('network_auto', [True], [])
+            show.assert_not_called()
+            bell.assert_not_called()
+        self.assertTrue(self.app.hidden)
+
+    def test_network_requiring_user_attention_is_still_visible(self):
+        self.run_network_fixture('network_auto', [False], [(200, '<html>Changed</html>', '')])
+        self.assertIn('校园网状态接口格式已变化', self.visible_log())
+        self.assertIn('校园网状态接口格式已变化', self.app.status.get())
 
     def test_test_connection_has_no_checkin_account_requirement_and_no_browser(self):
         next_attempt = now_cn() + timedelta(hours=1)

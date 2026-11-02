@@ -1,3 +1,20 @@
+# User interface
+
+The Qt Quick interface uses PySide6 / Qt for Python, distributed under its
+applicable LGPLv3/GPLv3/commercial terms. Runtime distribution includes the
+PySide6, PySide6_Essentials, and shiboken6 package license metadata. Source and
+license details: https://code.qt.io/pyside/pyside-setup.git/ and
+https://www.qt.io/licensing/.
+
+Icons are from Microsoft Fluent System Icons, Copyright (c) Microsoft Corporation,
+MIT license. Original SVG assets are retained and recolored at runtime. The full
+MIT license is included at ui/assets/Fluent-Icons-LICENSE.txt. Icon source:
+https://github.com/microsoft/fluentui-system-icons (Wi-Fi SVG from the same
+project's @fluentui/svg-icons 1.1.316 package).
+
+The pale background asset was generated with the built-in Image Gen tool.
+Windows system fonts are used and are not redistributed.
+
 # Campus network protocol references
 
 The campus network integration was independently implemented in Python's standard

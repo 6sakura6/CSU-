@@ -23,7 +23,7 @@ from campus_network import CampusNetwork, NetworkCredentials, CARRIERS, parse_po
 from tray import SystemTray, ICON_PATH
 from startup import StartupRegistration, startup_is_authorized, self_test_registration
 
-VERSION = "1.0.14"
+VERSION = "1.1.1"
 NETWORK_CHECK_SECONDS = 60 * 60
 NETWORK_MODES = ("network", "network_auto")
 DISCLAIMER_TEXT = "本程序仅供学习和测试使用。\n\n请在下载后 24 小时内删除。"
@@ -60,6 +60,12 @@ def show_disclaimer(root):
 
 
 class App:
+    # The scheduler is shared by the Qt interface and the legacy Tk interface.
+    dialogs = messagebox
+
+    def variable(self, value=""):
+        return tk.BooleanVar(value=value) if isinstance(value, bool) else tk.StringVar(value=value)
+
     def __init__(self, root, store=None, tray_factory=SystemTray, startup_factory=StartupRegistration):
         self.root, self.store = root, store or Store()
         self.lock = SingleInstance(self.store.root)
@@ -97,21 +103,21 @@ class App:
             username = ""
             load_error = "本地配置无法读取，请重新填写并保存。加密文件只能由原 Windows 账户读取。"
         self.next_network_check = time.monotonic() if self.settings.campus_network_enabled else None
-        self.username = tk.StringVar(value=username)
-        self.password = tk.StringVar()
-        self.start_time = tk.StringVar(value=self.settings.start)
-        self.end_time = tk.StringVar(value=self.settings.end)
-        self.retry = tk.StringVar(value=str(self.settings.retry_minutes))
+        self.username = self.variable(username)
+        self.password = self.variable()
+        self.start_time = self.variable(self.settings.start)
+        self.end_time = self.variable(self.settings.end)
+        self.retry = self.variable(str(self.settings.retry_minutes))
         try:
             login_enabled = startup_is_authorized(self.settings, self.startup, STARTUP_CONSENT)
         except OSError:
             login_enabled = False
-        self.login_start = tk.BooleanVar(value=login_enabled)
-        self.location_text = tk.StringVar(value=self.location_summary())
-        self.network_text = tk.StringVar(value=self.network_summary())
-        self.status = tk.StringVar(value="等待配置")
-        self.next_text = tk.StringVar(value="保存账户和时间后，点击开始定时。")
-        self.saved_text = tk.StringVar(value="已保存账户；密码留空表示沿用已保存密码。" if username else "账户密码只在本机输入和加密保存。")
+        self.login_start = self.variable(login_enabled)
+        self.location_text = self.variable(self.location_summary())
+        self.network_text = self.variable(self.network_summary())
+        self.status = self.variable("等待配置")
+        self.next_text = self.variable("保存账户和时间后，点击开始定时。")
+        self.saved_text = self.variable("已保存账户；密码留空表示沿用已保存密码。" if username else "账户密码只在本机输入和加密保存。")
         self.build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         if load_error:
@@ -191,16 +197,20 @@ class App:
 
         controls = ttk.Frame(outer)
         controls.pack(fill="x", pady=(1, 13))
-        self.save_button = ttk.Button(controls, text="保存配置", command=self.save)
+        primary_controls = ttk.Frame(controls)
+        primary_controls.pack(fill="x")
+        secondary_controls = ttk.Frame(controls)
+        secondary_controls.pack(fill="x", pady=(8, 0))
+        self.save_button = ttk.Button(primary_controls, text="保存配置", command=self.save)
         self.save_button.pack(side="left", padx=(0, 7))
-        self.start_button = ttk.Button(controls, text="开始定时", style="Primary.TButton", command=self.start_schedule)
+        self.start_button = ttk.Button(primary_controls, text="开始定时", style="Primary.TButton", command=self.start_schedule)
         self.start_button.pack(side="left", padx=(0, 7))
-        ttk.Button(controls, text="停止", command=self.stop_schedule).pack(side="left", padx=(0, 7))
-        self.check_button = ttk.Button(controls, text="仅检查登录与定位", command=lambda: self.launch("check"))
+        ttk.Button(primary_controls, text="停止", command=self.stop_schedule).pack(side="left", padx=(0, 7))
+        self.check_button = ttk.Button(secondary_controls, text="仅检查登录与定位", command=lambda: self.launch("check"))
         self.check_button.pack(side="left", padx=(0, 7))
-        self.run_button = ttk.Button(controls, text="立即检查并打卡", command=lambda: self.launch("manual"))
+        self.run_button = ttk.Button(secondary_controls, text="立即检查并打卡", command=lambda: self.launch("manual"))
         self.run_button.pack(side="left")
-        self.exit_button = ttk.Button(controls, text="退出程序", style="Exit.TButton", command=self.request_exit)
+        self.exit_button = ttk.Button(primary_controls, text="退出程序", style="Exit.TButton", command=self.request_exit)
         self.exit_button.pack(side="right")
 
         state = ttk.Frame(outer, style="Card.TFrame", padding=17)
@@ -221,6 +231,14 @@ class App:
         # Safe to call from the browser worker; Tk is only touched on the UI thread.
         self.messages.put(("log", (text, kind)))
 
+    def append_visible_log(self, line, level):
+        self.log_text.configure(state="normal")
+        self.log_text.insert("end", line + "\n")
+        if int(self.log_text.index("end-1c").split(".")[0]) > 600:
+            self.log_text.delete("1.0", "100.0")
+        self.log_text.see("end")
+        self.log_text.configure(state="disabled")
+
     def network_log(self, text):
         # Routine probes stay in activity.log; a confirmed offline state makes
         # subsequent recovery messages visible. Manual tests always show progress.
@@ -235,7 +253,7 @@ class App:
 
     def configure_network(self):
         if self.worker and self.worker.is_alive():
-            messagebox.showinfo("任务进行中", "请先停止并等待当前任务结束，再修改校园网设置。", parent=self.root)
+            self.dialogs.showinfo("任务进行中", "请先停止并等待当前任务结束，再修改校园网设置。", parent=self.root)
             return
         saved = {}
         try:
@@ -274,7 +292,7 @@ class App:
 
         def save_network(test=False):
             if self.worker and self.worker.is_alive():
-                messagebox.showinfo("任务进行中", "请等待当前任务结束再保存校园网设置。", parent=dialog)
+                self.dialogs.showinfo("任务进行中", "请等待当前任务结束再保存校园网设置。", parent=dialog)
                 return
             try:
                 key = CARRIERS.get(carrier.get(), "")
@@ -304,7 +322,7 @@ class App:
                     self.launch("network")
             except Exception as error:
                 message = str(error) if isinstance(error, ValueError) else "校园网设置保存失败，请检查本地文件权限。"
-                messagebox.showerror("无法保存校园网设置", message, parent=dialog)
+                self.dialogs.showerror("无法保存校园网设置", message, parent=dialog)
 
         actions = ttk.Frame(content, style="Card.TFrame")
         actions.grid(row=6, column=0, columnspan=2, sticky="e")
@@ -328,7 +346,7 @@ class App:
 
     def toggle_login_start(self):
         requested = self.login_start.get()
-        if requested and not messagebox.askokcancel(
+        if requested and not self.dialogs.askokcancel(
                 "启用开机自启动", DISCLAIMER_TEXT + "\n\n启用后，登录 Windows 时会直接进入系统托盘，沿用本次免责声明确认，"
                 "并恢复上次已开启的定时。手动打开仍会显示免责声明。\n\n是否启用？", parent=self.root):
             self.login_start.set(False)
@@ -350,7 +368,7 @@ class App:
                 self.login_start.set(startup_is_authorized(previous, self.startup, STARTUP_CONSENT))
             except OSError:
                 self.login_start.set(False)
-            messagebox.showerror("无法保存自启动设置", "开机自启动设置未能保存，请检查本机写入权限；原定时设置不变。", parent=self.root)
+            self.dialogs.showerror("无法保存自启动设置", "开机自启动设置未能保存，请检查本机写入权限；原定时设置不变。", parent=self.root)
 
     def start_from_login(self):
         self.tray_hint_shown = True
@@ -365,7 +383,7 @@ class App:
 
     def configure_location(self):
         if self.worker and self.worker.is_alive():
-            messagebox.showinfo("任务进行中", "请先停止并等待本次操作结束，再修改定位。", parent=self.root)
+            self.dialogs.showinfo("任务进行中", "请先停止并等待本次操作结束，再修改定位。", parent=self.root)
             return
         saved = None
         try:
@@ -414,11 +432,11 @@ class App:
             try:
                 parse()
             except ValueError as error:
-                messagebox.showerror("坐标格式不正确", str(error), parent=dialog)
+                self.dialogs.showerror("坐标格式不正确", str(error), parent=dialog)
 
         def save_location():
             if self.worker and self.worker.is_alive():
-                messagebox.showinfo("任务进行中", "请等待本次操作结束后再保存定位。", parent=dialog)
+                self.dialogs.showinfo("任务进行中", "请等待本次操作结束后再保存定位。", parent=dialog)
                 return
             try:
                 updated = replace(self.settings, location_mode=mode.get()).validate()
@@ -431,7 +449,7 @@ class App:
                 dialog.destroy()
             except Exception as error:
                 message = str(error) if isinstance(error, (ValueError, OSError)) else "无法保存定位设置，请检查本地文件。"
-                messagebox.showerror("无法保存定位", message, parent=dialog)
+                self.dialogs.showerror("无法保存定位", message, parent=dialog)
 
         actions = ttk.Frame(body, style="Card.TFrame")
         actions.pack(side="bottom", fill="x")
@@ -452,7 +470,7 @@ class App:
     def save(self, quiet=False):
         if self.worker and self.worker.is_alive():
             if not quiet:
-                messagebox.showinfo("任务进行中", "请先停止并等待本次操作结束，再修改配置。", parent=self.root)
+                self.dialogs.showinfo("任务进行中", "请先停止并等待本次操作结束，再修改配置。", parent=self.root)
             return False
         try:
             settings = replace(self.settings, start=self.start_time.get().strip(), end=self.end_time.get().strip(),
@@ -483,7 +501,7 @@ class App:
             return True
         except Exception as error:
             message = str(error) if isinstance(error, (ValueError, OSError)) else "配置保存失败，请检查文件夹写入权限。"
-            messagebox.showerror("无法保存", message, parent=self.root)
+            self.dialogs.showerror("无法保存", message, parent=self.root)
             return False
 
     def restore_schedule(self):
@@ -685,12 +703,7 @@ class App:
                     self.logger.info(line)
                     if level == "background":
                         continue
-                    self.log_text.configure(state="normal")
-                    self.log_text.insert("end", line + "\n")
-                    if int(self.log_text.index("end-1c").split(".")[0]) > 600:
-                        self.log_text.delete("1.0", "100.0")
-                    self.log_text.see("end")
-                    self.log_text.configure(state="disabled")
+                    self.append_visible_log(line, level)
                     if level == "attention":
                         if self.hidden and not self.closing:
                             self.show_window()
@@ -720,7 +733,7 @@ class App:
         self.tray.set_running(self.enabled)
         if not self.tray.start():
             self.show_window()
-            messagebox.showerror("无法转入后台", "系统托盘图标未能启动，窗口将保持打开，请稍后重试。", parent=self.root)
+            self.dialogs.showerror("无法转入后台", "系统托盘图标未能启动，窗口将保持打开，请稍后重试。", parent=self.root)
             return
         self.root.withdraw()
         self.hidden = True
@@ -803,6 +816,9 @@ def main():
         return self_test()
     if "--quit" in sys.argv:
         return 0 if SingleInstance.signal(app_dir() / "data", "exit") else 1
+    if "--design-preview" in sys.argv:
+        from glass_ui import run
+        return run(preview=True)
     from_login = "--startup" in sys.argv
     if from_login:
         try:
@@ -814,6 +830,9 @@ def main():
             return 0
     elif SingleInstance.signal(app_dir() / "data", "show"):
         return 0
+    if "--legacy-ui" not in sys.argv:
+        from glass_ui import run
+        return run(from_login=from_login)
     root = tk.Tk()
     root.iconbitmap(default=str(ICON_PATH))
     if not from_login and not show_disclaimer(root):

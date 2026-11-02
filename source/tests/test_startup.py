@@ -204,18 +204,17 @@ class LoginRuntimeTests(StartupUiFixture, unittest.TestCase):
 class StartupMainTests(unittest.TestCase):
     def test_authorized_logon_uses_background_start_without_modal(self):
         with patch.object(sys, 'argv', ['app', '--startup']), patch('app.Store') as store, \
-                patch('app.StartupRegistration') as registration, patch('app.tk.Tk') as root, \
-                patch('app.SingleInstance.is_running', return_value=False), patch('app.App') as application, \
+                patch('app.StartupRegistration') as registration, patch('glass_ui.run', return_value=0) as run, \
+                patch('app.SingleInstance.is_running', return_value=False), \
                 patch('app.show_disclaimer') as disclaimer:
             store.return_value.settings.return_value = Settings(launch_at_login=True, startup_consent=STARTUP_CONSENT)
             registration.return_value.is_enabled.return_value = True
             self.assertEqual(app.main(), 0)
             disclaimer.assert_not_called()
-            application.return_value.start_from_login.assert_called_once()
-            root.return_value.mainloop.assert_called_once()
+            run.assert_called_once_with(from_login=True)
 
     def test_manual_launch_still_waits_for_disclaimer(self):
-        with patch.object(sys, 'argv', ['app']), patch('app.SingleInstance.signal', return_value=False), \
+        with patch.object(sys, 'argv', ['app', '--legacy-ui']), patch('app.SingleInstance.signal', return_value=False), \
                 patch('app.tk.Tk') as root, patch('app.show_disclaimer', return_value=False) as disclaimer, \
                 patch('app.App') as application:
             self.assertEqual(app.main(), 0)

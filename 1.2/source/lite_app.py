@@ -86,9 +86,11 @@ def run(args):
     page_folder = tempfile.TemporaryDirectory(prefix='CSU_Lite_Page_')
     page = Path(page_folder.name)/'index.html'
     page.write_text(render_html(), encoding='utf-8')
+    # WinForms' shadow option enables a rectangular DWM non-client frame;
+    # the native Region below owns our complete 24px rounded outer contour.
     window = webview.create_window('平安打卡助手', url=str(page), js_api=Bridge(coordinator),
         width=1200, height=860, min_size=(860, 680), frameless=True, easy_drag=False,
-        shadow=True, background_color='#eef5ff', focus=not args.self_test)
+        shadow=False, background_color='#eef5ff', focus=not args.self_test)
     native = NativeWindow(window, ASSETS/'assets/app.ico', coordinator.quit,
         lambda: Bridge(coordinator).action('toggle_schedule'))
     coordinator.window, coordinator.native = window, native

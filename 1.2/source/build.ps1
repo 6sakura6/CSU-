@@ -1,4 +1,4 @@
-param([string]$Python = '', [string]$OutputDirectory = 'dist/release-v1.2.1', [switch]$LegacyQt)
+param([string]$Python = '', [string]$OutputDirectory = 'dist/release-v1.2.2', [switch]$LegacyQt)
 $ErrorActionPreference = 'Stop'
 if ($LegacyQt) {
     if (-not $Python) { $Python = 'python' }

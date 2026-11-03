@@ -1,12 +1,16 @@
 {
   "current": {
-    "version": "1.2.1",
+    "version": "1.2.2",
     "source_path": "source",
-    "origin": "整理前 source 工作目录，包含已完成、尚未提交的轻量迁移与登录修复。"
+    "origin": "1.2 分支上的外边框圆角修复工作源码。"
   },
   "v1.2.0": {
     "source_snapshot_available": false,
     "note": "原程序与发布包保留；没有独立保存的该小版本源码快照。"
   },
-  "prototype_path": "prototype/lite"
+  "prototype_path": "prototype/lite",
+  "v1.2.1": {
+    "git_tag": "v1.2.1",
+    "source_snapshot_available": true
+  }
 }

@@ -22,5 +22,13 @@
   {
     "path": "dist/中间构建/release-v1.2.0-verified/平安打卡助手/平安打卡助手.exe",
     "embedded_version": "1.2.0"
+  },
+  {
+    "path": "dist/1.2.2/平安打卡助手/平安打卡助手.exe",
+    "embedded_version": "1.2.2"
+  },
+  {
+    "path": "dist/1.2.2-hotfix/平安打卡助手.exe",
+    "embedded_version": "1.2.2"
   }
 ]

@@ -127,17 +127,21 @@ def run_ui_selftest(window, coordinator, capture=None):
     native=coordinator.native
     checks['tray'] = native.info()['tray']
     checks['normal_rounded'] = native.info()['rounded']
+    checks['no_legacy_window_shadow'] = not window.shadow
+    checks['resize_grips_composited'] = native.info()['resize_grips_composited']
+    checks['resize_corners_clipped'] = native.info()['resize_corners_clipped']
     for width,height in [(860,680),(1000,760),(1200,860),(1480,920)]:
         window.resize(width,height)
         time.sleep(0.2)
-        checks['layout_'+str(width)] = window.evaluate_js('document.documentElement.scrollWidth<=innerWidth') and native.info()['rounded']
+        checks['layout_'+str(width)] = (window.evaluate_js('document.documentElement.scrollWidth<=innerWidth')
+            and native.info()['rounded'] and native.info()['resize_corners_clipped'])
     native.toggle_maximize()
     time.sleep(0.2)
     checks['maximized_square'] = not native.info()['rounded']
     native.toggle_maximize()
     window.resize(1200,860)
     time.sleep(0.3)
-    checks['restored_round'] = native.info()['rounded']
+    checks['restored_round'] = native.info()['rounded'] and native.info()['resize_corners_clipped']
     native.hide()
     checks['tray_hide'] = not window.native.Visible
     native.show()
@@ -146,4 +150,5 @@ def run_ui_selftest(window, coordinator, capture=None):
     if capture:
         native.capture(capture)
     return {'passed': all(checks.values()), 'checks':checks, 'native':native.info(),
+            'capture_scope':'web_content_with_window_region_mask',
             'fixture_submissions':coordinator.fixture.submitted, 'fixture_requests_intercepted':coordinator.fixture.intercepted}

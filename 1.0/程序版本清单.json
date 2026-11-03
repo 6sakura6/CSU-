@@ -1,0 +1,50 @@
+[
+  {
+    "path": "dist/1.0.14/平安打卡助手/平安打卡助手.exe",
+    "embedded_version": "1.0.14"
+  },
+  {
+    "path": "已安装程序/1.0.14/平安打卡助手.exe",
+    "embedded_version": "1.0.14"
+  },
+  {
+    "path": "历史安装备份/icon-20261018-202448/平安打卡助手.exe",
+    "embedded_version": "1.0.5"
+  },
+  {
+    "path": "历史安装备份/icon-20261018-202758/平安打卡助手.exe",
+    "embedded_version": "1.0.5"
+  },
+  {
+    "path": "历史安装备份/v1.0.1/平安打卡助手.exe",
+    "embedded_version": "1.0.1"
+  },
+  {
+    "path": "历史安装备份/v1.0.2/平安打卡助手.exe",
+    "embedded_version": "1.0.2"
+  },
+  {
+    "path": "历史安装备份/v1.0.3/平安打卡助手.exe",
+    "embedded_version": "1.0.3"
+  },
+  {
+    "path": "历史安装备份/v1.0.4/平安打卡助手.exe",
+    "embedded_version": "1.0.4"
+  },
+  {
+    "path": "历史安装备份/v1.0.6/平安打卡助手.exe",
+    "embedded_version": "1.0.6"
+  },
+  {
+    "path": "历史安装备份/v1.0.7/平安打卡助手.exe",
+    "embedded_version": "1.0.7"
+  },
+  {
+    "path": "历史安装备份/v1.0.8/平安打卡助手.exe",
+    "embedded_version": "1.0.8"
+  },
+  {
+    "path": "历史安装备份/v1.0.9/平安打卡助手.exe",
+    "embedded_version": "1.0.9"
+  }
+]

@@ -1,0 +1,310 @@
+{
+  "date": "2026-11-03",
+  "version_folders": [
+    "1.0",
+    "1.1",
+    "1.2"
+  ],
+  "current_development_source": "1.2/source",
+  "current_version": "1.2.1",
+  "moves": [
+    {
+      "from": "source",
+      "to": "1.2/source"
+    },
+    {
+      "from": "prototype",
+      "to": "1.2/prototype"
+    },
+    {
+      "from": "README.md",
+      "to": "1.2/README.md"
+    },
+    {
+      "from": "使用说明.md",
+      "to": "1.2/使用说明.md"
+    },
+    {
+      "from": "验证记录.md",
+      "to": "1.2/验证记录.md"
+    },
+    {
+      "from": "design-qa.md",
+      "to": "1.1/验证资料/design-qa.md"
+    },
+    {
+      "from": "build",
+      "to": "1.1/build"
+    },
+    {
+      "from": "平安打卡助手.exe",
+      "to": "1.0/已安装程序/1.0.14/平安打卡助手.exe"
+    },
+    {
+      "from": "_internal",
+      "to": "1.0/已安装程序/1.0.14/_internal"
+    },
+    {
+      "from": "data",
+      "to": "1.0/已安装程序/1.0.14/data"
+    },
+    {
+      "from": "平安打卡助手-Windows.zip",
+      "to": "1.0/发布包/原根目录-平安打卡助手-Windows-v1.0.10.zip"
+    },
+    {
+      "from": "dist/1.1.0",
+      "to": "1.1/dist/1.1.0"
+    },
+    {
+      "from": "dist/1.1.1",
+      "to": "1.1/dist/1.1.1"
+    },
+    {
+      "from": "dist/1.2.0",
+      "to": "1.2/dist/1.2.0"
+    },
+    {
+      "from": "dist/1.2.1",
+      "to": "1.2/dist/1.2.1"
+    },
+    {
+      "from": "dist/1.2.1-hotfix",
+      "to": "1.2/dist/1.2.1-hotfix"
+    },
+    {
+      "from": "dist/CSU-Peace-Checkin-Windows-v1.2.0.zip",
+      "to": "1.2/发布包/CSU-Peace-Checkin-Windows-v1.2.0.zip"
+    },
+    {
+      "from": "dist/CSU-Peace-Checkin-Windows-v1.2.0.zip.sha256",
+      "to": "1.2/发布包/CSU-Peace-Checkin-Windows-v1.2.0.zip.sha256"
+    },
+    {
+      "from": "dist/CSU-Peace-Checkin-Windows-v1.2.1-hotfix.zip",
+      "to": "1.2/发布包/CSU-Peace-Checkin-Windows-v1.2.1-hotfix.zip"
+    },
+    {
+      "from": "dist/CSU-Peace-Checkin-Windows-v1.2.1-hotfix.zip.sha256",
+      "to": "1.2/发布包/CSU-Peace-Checkin-Windows-v1.2.1-hotfix.zip.sha256"
+    },
+    {
+      "from": "dist/CSU-Peace-Checkin-Windows-v1.2.1.zip",
+      "to": "1.2/发布包/CSU-Peace-Checkin-Windows-v1.2.1.zip"
+    },
+    {
+      "from": "dist/CSU-Peace-Checkin-Windows-v1.2.1.zip.sha256",
+      "to": "1.2/发布包/CSU-Peace-Checkin-Windows-v1.2.1.zip.sha256"
+    },
+    {
+      "from": "dist/CSUCheckinLiteBackend-v0.2.0.zip",
+      "to": "1.2/发布包/验证版/CSUCheckinLiteBackend-v0.2.0.zip"
+    },
+    {
+      "from": "dist/CSUCheckinLitePrototype-v0.1.0.zip",
+      "to": "1.2/发布包/验证版/CSUCheckinLitePrototype-v0.1.0.zip"
+    },
+    {
+      "from": "dist/lite-backend-v0.2.0",
+      "to": "1.2/dist/验证版/lite-backend-v0.2.0"
+    },
+    {
+      "from": "dist/lite-prototype",
+      "to": "1.2/dist/验证版/lite-prototype"
+    },
+    {
+      "from": "dist/lite-prototype-v0.1.0",
+      "to": "1.2/dist/验证版/lite-prototype-v0.1.0"
+    },
+    {
+      "from": "dist/release-v1.1.1",
+      "to": "1.1/dist/release-v1.1.1"
+    },
+    {
+      "from": "dist/release-v1.2.0",
+      "to": "1.2/dist/中间构建/release-v1.2.0"
+    },
+    {
+      "from": "dist/release-v1.2.0-final",
+      "to": "1.2/dist/中间构建/release-v1.2.0-final"
+    },
+    {
+      "from": "dist/release-v1.2.0-verified",
+      "to": "1.2/dist/中间构建/release-v1.2.0-verified"
+    },
+    {
+      "from": "dist/平安打卡助手",
+      "to": "1.0/dist/1.0.14/平安打卡助手"
+    },
+    {
+      "from": "dist/平安打卡助手-1.1.0-轻毛玻璃.zip",
+      "to": "1.1/发布包/平安打卡助手-1.1.0-轻毛玻璃.zip"
+    },
+    {
+      "from": "dist/平安打卡助手-1.1.1-圆角版.zip",
+      "to": "1.1/发布包/平安打卡助手-1.1.1-圆角版.zip"
+    },
+    {
+      "from": "work/publish/CSU-Peace-Checkin-Windows-v1.1.1.zip",
+      "to": "1.1/发布包/CSU-Peace-Checkin-Windows-v1.1.1.zip"
+    },
+    {
+      "from": "work/publish/平安打卡助手-Windows-v1.0.1.zip",
+      "to": "1.0/发布包/平安打卡助手-Windows-v1.0.1.zip"
+    },
+    {
+      "from": "work/publish/平安打卡助手-Windows-v1.0.10.zip",
+      "to": "1.0/发布包/平安打卡助手-Windows-v1.0.10.zip"
+    },
+    {
+      "from": "work/publish/平安打卡助手-Windows-v1.0.11.zip",
+      "to": "1.0/发布包/平安打卡助手-Windows-v1.0.11.zip"
+    },
+    {
+      "from": "work/publish/平安打卡助手-Windows-v1.0.12.zip",
+      "to": "1.0/发布包/平安打卡助手-Windows-v1.0.12.zip"
+    },
+    {
+      "from": "work/publish/平安打卡助手-Windows-v1.0.13.zip",
+      "to": "1.0/发布包/平安打卡助手-Windows-v1.0.13.zip"
+    },
+    {
+      "from": "work/publish/平安打卡助手-Windows-v1.0.14.zip",
+      "to": "1.0/发布包/平安打卡助手-Windows-v1.0.14.zip"
+    },
+    {
+      "from": "work/publish/平安打卡助手-Windows-v1.0.2.zip",
+      "to": "1.0/发布包/平安打卡助手-Windows-v1.0.2.zip"
+    },
+    {
+      "from": "work/publish/平安打卡助手-Windows-v1.0.3.zip",
+      "to": "1.0/发布包/平安打卡助手-Windows-v1.0.3.zip"
+    },
+    {
+      "from": "work/publish/平安打卡助手-Windows-v1.0.4.zip",
+      "to": "1.0/发布包/平安打卡助手-Windows-v1.0.4.zip"
+    },
+    {
+      "from": "work/publish/平安打卡助手-Windows-v1.0.5.zip",
+      "to": "1.0/发布包/平安打卡助手-Windows-v1.0.5.zip"
+    },
+    {
+      "from": "work/publish/平安打卡助手-Windows-v1.0.6.zip",
+      "to": "1.0/发布包/平安打卡助手-Windows-v1.0.6.zip"
+    },
+    {
+      "from": "work/publish/平安打卡助手-Windows-v1.0.7.zip",
+      "to": "1.0/发布包/平安打卡助手-Windows-v1.0.7.zip"
+    },
+    {
+      "from": "work/publish/平安打卡助手-Windows-v1.0.8.zip",
+      "to": "1.0/发布包/平安打卡助手-Windows-v1.0.8.zip"
+    },
+    {
+      "from": "work/publish/平安打卡助手-Windows-v1.0.9.zip",
+      "to": "1.0/发布包/平安打卡助手-Windows-v1.0.9.zip"
+    },
+    {
+      "from": "work/updates",
+      "to": "1.0/历史安装备份"
+    },
+    {
+      "from": "work/ui-preview",
+      "to": "1.1/验证资料/ui-preview"
+    },
+    {
+      "from": "work/lite-final",
+      "to": "1.2/验证资料/lite-final"
+    },
+    {
+      "from": "work/lite-validation",
+      "to": "1.2/验证资料/lite-validation"
+    },
+    {
+      "from": "work/login-fix",
+      "to": "1.2/验证资料/login-fix"
+    },
+    {
+      "from": "work/size-research",
+      "to": "1.2/验证资料/size-research"
+    },
+    {
+      "from": "work/full-lite-build",
+      "to": "1.2/build/full-lite-build"
+    },
+    {
+      "from": "work/lite-build",
+      "to": "1.2/build/lite-build"
+    },
+    {
+      "from": "work/build-1.0.11.txt",
+      "to": "1.0/验证资料/原调试记录/build-1.0.11.txt"
+    },
+    {
+      "from": "work/build-1.0.12.txt",
+      "to": "1.0/验证资料/原调试记录/build-1.0.12.txt"
+    },
+    {
+      "from": "work/build-1.0.13.txt",
+      "to": "1.0/验证资料/原调试记录/build-1.0.13.txt"
+    },
+    {
+      "from": "work/build-1.0.14.txt",
+      "to": "1.0/验证资料/原调试记录/build-1.0.14.txt"
+    },
+    {
+      "from": "work/self-test-1.0.11.json",
+      "to": "1.0/验证资料/原调试记录/self-test-1.0.11.json"
+    },
+    {
+      "from": "work/self-test-1.0.12.json",
+      "to": "1.0/验证资料/原调试记录/self-test-1.0.12.json"
+    },
+    {
+      "from": "work/self-test-1.0.13.json",
+      "to": "1.0/验证资料/原调试记录/self-test-1.0.13.json"
+    },
+    {
+      "from": "work/self-test-1.0.14.json",
+      "to": "1.0/验证资料/原调试记录/self-test-1.0.14.json"
+    },
+    {
+      "from": "work/test-1.0.11.txt",
+      "to": "1.0/验证资料/原调试记录/test-1.0.11.txt"
+    },
+    {
+      "from": "work/test-1.0.12.txt",
+      "to": "1.0/验证资料/原调试记录/test-1.0.12.txt"
+    },
+    {
+      "from": "work/test-1.0.13.txt",
+      "to": "1.0/验证资料/原调试记录/test-1.0.13.txt"
+    },
+    {
+      "from": "work/test-1.0.14.txt",
+      "to": "1.0/验证资料/原调试记录/test-1.0.14.txt"
+    }
+  ],
+  "verification": {
+    "moved_paths": 69,
+    "protected_files_checked_before_path_adaptation": 77,
+    "unchanged_archives_and_local_state_files_verified": 74,
+    "working_source_files_preserved_before_path_adaptation": 88,
+    "git_source_snapshots": 15,
+    "exact_git_blobs_verified": 321,
+    "private_artifacts_excluded_from_git": true,
+    "old_source_imports": [
+      "1.0.14",
+      "1.1.1"
+    ],
+    "current_entry_help": true,
+    "relocated_bridge_tests_passed": 19,
+    "build_scripts_parsed": true
+  },
+  "source_snapshot_limitations": [
+    "1.1.0 未保存独立源码快照，主源码为 v1.1.1",
+    "1.2.0 未保存独立源码快照，主源码为 1.2.1"
+  ],
+  "shared_environment": "work/lite-venv",
+  "migration_record": "work/organize-versions"
+}

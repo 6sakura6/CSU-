@@ -1,19 +1,23 @@
 # Private local state: credentials, sessions, settings and activity
-/data/
+**/data/
 *.dat
 *.log
 .env
 .env.*
 
 # Installed application runtime and downloadable archives belong in Releases
-/_internal/
-/平安打卡助手.exe
-/*.zip
+**/_internal/
+*.exe
+*.zip
 
 # Build products and local development files
-/work/
-/build/
-/dist/
+**/work/
+**/build/
+**/dist/
+/1.0/已安装程序/
+/1.0/历史安装备份/
+**/发布包/
+**/验证资料/
 /.venv/
 __pycache__/
 *.py[cod]

@@ -1,0 +1,23 @@
+# Private local state: credentials, sessions, settings and activity
+/data/
+*.dat
+*.log
+.env
+.env.*
+
+# Installed application runtime and downloadable archives belong in Releases
+/_internal/
+/平安打卡助手.exe
+/*.zip
+
+# Build products and local development files
+/work/
+/build/
+/dist/
+/.venv/
+__pycache__/
+*.py[cod]
+*.spec
+.pytest_cache/
+.idea/
+.vscode/

@@ -1,0 +1,14 @@
+[
+  {
+    "path": "dist/1.1.0/平安打卡助手/平安打卡助手.exe",
+    "embedded_version": "1.1.0"
+  },
+  {
+    "path": "dist/1.1.1/平安打卡助手/平安打卡助手.exe",
+    "embedded_version": "1.1.1"
+  },
+  {
+    "path": "dist/release-v1.1.1/平安打卡助手/平安打卡助手.exe",
+    "embedded_version": "1.1.1"
+  }
+]

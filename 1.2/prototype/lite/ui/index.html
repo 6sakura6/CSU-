@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'unsafe-eval'; connect-src 'none'">
+  <title>平安打卡 · 轻量验证版</title>
+  <style>/* INLINE_CSS */</style>
+</head>
+<body>
+  <header class="titlebar">
+    <div class="brand pywebview-drag-region"><span class="brand-mark">{{ICON:shield}}</span><span>平安打卡助手</span><span class="title-tag">轻量验证版</span></div>
+    <nav class="window-controls" aria-label="窗口控制">
+      <button data-window="minimize" aria-label="最小化">{{ICON:minimize}}</button>
+      <button data-window="maximize" aria-label="最大化或还原">{{ICON:maximize}}</button>
+      <button data-window="hide" class="close-window" aria-label="关闭到托盘">{{ICON:close}}</button>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero glass">
+      <div class="hero-content">
+        <div class="eyebrow"><i class="status-dot"></i>本地能力验证 <span>PROTOTYPE 01</span></div>
+        <h1>轻一点，也很从容。</h1>
+        <p class="hero-description">熟悉的圆角与轻盈动效，换一种更小的实现。</p>
+        <div class="hero-status"><span class="check-icon" id="status-icon">{{ICON:check}}</span><div><strong id="status">准备就绪</strong><p>测试使用本机页面，不连接学校服务</p></div></div>
+        <div class="hero-actions"><button class="button primary" id="run" disabled>{{ICON:play}}<span>运行完整验证</span></button><button class="button secondary" id="stop" hidden>{{ICON:stop}}<span>停止验证</span></button><button class="text-button" id="logs-jump">查看验证记录 {{ICON:arrow}}</button></div>
+      </div>
+      <div class="size-orbit"><div class="orbit-glow"></div><div class="size-disc"><span class="disc-label">应用体积</span><div><strong id="size">—</strong><span class="mb"> MB</span></div><span class="disc-caption" id="size-caption">等待打包实测</span><span class="size-limit">目标 &lt; 100 MB</span></div></div>
+    </section>
+
+    <section class="card-grid" aria-label="验证能力">
+      <article class="glass capability">
+        <div class="card-heading"><span class="icon-tile blue">{{ICON:shield}}</span><div><h2>本地加密</h2><p>沿用 Windows 加密存储</p></div><span class="card-pill" id="crypto-state">待验证</span></div>
+        <button class="setting-line" id="settings-open"><div><span>验证账户</span><strong id="account-name">本地验证账户</strong></div><span class="chevron">{{ICON:chevron}}</span></button>
+        <div class="card-bottom"><span class="subtle-dot"></span>设置独立保存，可验证重启后读取</div>
+      </article>
+      <article class="glass capability">
+        <div class="card-heading"><span class="icon-tile purple">{{ICON:clock}}</span><div><h2>定时调度</h2><p>保留原有排期规则</p></div><button class="switch" id="timer-toggle" role="switch" aria-checked="false" aria-label="开启五秒倒计时验证"><span></span></button></div>
+        <div class="timer-line"><strong>5<span> 秒</span></strong><div><b id="timer-state">等待验证</b><span>触发一次本地能力检查</span></div></div>
+        <div class="card-bottom">{{ICON:info}} 此处使用短倒计时验证交互与触发</div>
+      </article>
+    </section>
+
+    <section class="quick-grid" aria-label="其他验证能力">
+      <article class="glass quick-item"><span class="icon-tile mint">{{ICON:link}}</span><div><h3>浏览器连接</h3><p id="browser-state">Edge / Chrome · 本地测试</p></div><span class="mini-state" id="browser-mark">待验证</span></article>
+      <article class="glass quick-item"><span class="icon-tile amber">{{ICON:power}}</span><div><h3>托盘与恢复</h3><p>关闭窗口后从托盘恢复</p></div><button class="icon-button" id="tray-test" aria-label="隐藏到托盘">{{ICON:chevron}}</button></article>
+    </section>
+
+    <section class="glass log-panel" id="log-panel">
+      <div class="log-heading"><div><span class="section-icon">{{ICON:document}}</span><h2>验证记录</h2><span class="log-count" id="log-count">0 条</span></div><span class="log-caption">全部记录来自本机测试</span></div>
+      <div class="log-list" id="logs" aria-live="polite"><div class="empty-log">界面就绪后，点击「运行完整验证」开始。</div></div>
+    </section>
+  </main>
+  <footer><span><i class="status-dot"></i>仅用于轻量方案验证</span><span>业务后端已迁移 · 完整操作界面尚未接入</span><button id="quit">退出验证版</button></footer>
+
+  <dialog id="settings" aria-labelledby="settings-title">
+    <form id="settings-form">
+      <div class="modal-heading"><span class="icon-tile blue">{{ICON:settings}}</span><div><h2 id="settings-title">验证设置</h2><p>保存在验证版的独立目录中</p></div><button type="button" class="icon-button" id="settings-close" aria-label="关闭设置">{{ICON:close}}</button></div>
+      <label for="name">验证名称</label><input id="name" maxlength="32" required autocomplete="off" placeholder="例如：我的轻量验证">
+      <label for="note">加密验证文字</label><input id="note" type="password" maxlength="160" autocomplete="off" placeholder="可填写任意测试文字，无需校园密码">
+      <p class="modal-note">保存时会实际加密并重新读取核对。验证文字不会在主界面或日志中显示。</p>
+      <div class="modal-actions"><button type="button" class="button secondary" id="settings-cancel">取消</button><button type="submit" class="button primary">{{ICON:save}}保存并验证</button></div>
+    </form>
+  </dialog>
+  <div class="toast" role="status" id="toast"></div>
+  <script>/* INLINE_JS */</script>
+</body>
+</html>

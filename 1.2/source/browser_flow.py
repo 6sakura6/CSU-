@@ -1,0 +1,392 @@
+"""Shared browser workflow. Contains no browser engine or UI toolkit imports."""
+from __future__ import annotations
+
+from datetime import datetime
+from urllib.parse import urlsplit, parse_qs, unquote
+import threading
+import time
+
+from core import (SERVICE_URL, SCHOOL_ORIGIN, MENU_SUFFIX, QUERY_SUFFIX,
+                  SUBMIT_SUFFIX, AppError, Cancelled, RunResult, PunchStatus,
+                  now_cn, server_batch, find_punch_menu, resolve_menu_url, route_key)
+
+
+# Read the location and range decision from the page's normal component.
+LOCATION_STATE_JS = """() => {
+    // Uni-app pages can attach their business instance to a nested custom node.
+    // Walk component references, without changing the school's component state.
+    const stack = [];
+    for (const el of document.querySelectorAll('*')) {
+        if (el.__vue__) stack.push(el.__vue__);
+        if (el.__vueParentComponent) stack.push(el.__vueParentComponent);
+        if (el.__vue_app__) stack.push(el.__vue_app__);
+    }
+    const seen = new Set();
+    while (stack.length && seen.size < 5000) {
+        const candidate = stack.pop();
+        if (!candidate || typeof candidate !== 'object' || seen.has(candidate)) continue;
+        seen.add(candidate);
+        const vm = candidate.proxy || candidate;
+        if (typeof vm.handlePunch === 'function' && typeof vm.submitPadk === 'function') {
+            const read = value => value && value.__v_isRef ? value.value : value;
+            return {lat: read(vm.latitude), lng: read(vm.longitude), name: read(vm.locationName) || '',
+                    canPunch: read(vm.canPunch), locating: !!read(vm.locating),
+                    failed: !!read(vm.punchAbnormal), unavailable: !!read(vm.isUnavailable)};
+        }
+        for (const key of ['$children', 'children']) {
+            if (Array.isArray(candidate[key])) stack.push(...candidate[key]);
+        }
+        if (candidate.$refs) stack.push(...Object.values(candidate.$refs));
+        for (const key of ['_vnode', 'componentInstance', 'subTree', 'component']) {
+            if (candidate[key]) stack.push(candidate[key]);
+        }
+    }
+    return null;
+}"""
+
+NATIVE_LOCATION_JS = """() => new Promise(resolve => {
+    if (!navigator.geolocation) return resolve({ok:false});
+    navigator.geolocation.getCurrentPosition(
+        p => resolve({ok:true, lat:p.coords.latitude, lng:p.coords.longitude,
+                      accuracy:p.coords.accuracy}),
+        () => resolve({ok:false}),
+        {enableHighAccuracy:true, maximumAge:0, timeout:15000});
+})"""
+
+# Manual GPS coordinates are supplied through Playwright's browser geolocation API.
+# The school's first provider uses BMapGL (which can return an IP-based location).
+# Decline only that provider's position result so the school's existing GPS fallback
+# applies its own WGS84-to-GCJ02 conversion, reverse geocoding and range validation.
+MANUAL_LOCATION_INIT_JS = """(() => {
+    if (location.origin !== 'https://zhxg.csu.edu.cn') return;
+    const patched = new WeakSet();
+    const patch = sdk => {
+        const proto = sdk && sdk.Geolocation && sdk.Geolocation.prototype;
+        if (!proto || patched.has(proto)) return;
+        Object.defineProperties(proto, {
+            getCurrentPosition: {configurable:true, writable:true, value:function(callback) {
+                queueMicrotask(() => { if (typeof callback === 'function') callback(null); });
+            }},
+            getStatus: {configurable:true, writable:true, value:function() { return 2; }}
+        });
+        patched.add(proto);
+    };
+    const descriptor = Object.getOwnPropertyDescriptor(window, 'BMapGL');
+    if (!descriptor || descriptor.configurable) {
+        let current = window.BMapGL;
+        Object.defineProperty(window, 'BMapGL', {
+            configurable:true, enumerable:true,
+            get() { patch(current); return current; },
+            set(value) { current = value; patch(current); }
+        });
+    } else {
+        patch(window.BMapGL);
+    }
+})()"""
+
+
+def valid_location(value):
+    if not isinstance(value, dict):
+        return False
+    try:
+        lat, lng = float(value["lat"]), float(value["lng"])
+        return -90 <= lat <= 90 and -180 <= lng <= 180 and (lat != 0 or lng != 0)
+    except (ValueError, TypeError, KeyError):
+        return False
+
+
+def safe_login_url(url):
+    parts = urlsplit(url)
+    if parts.scheme != "https" or parts.hostname != "ca.csu.edu.cn" or not parts.path.startswith("/authserver/"):
+        return False
+    service = parse_qs(parts.query).get("service", [""])[0]
+    if service:
+        service_parts = urlsplit(unquote(service))
+        if (service_parts.scheme != "https" or service_parts.hostname != "zhxg.csu.edu.cn"
+                or service_parts.path != "/fdcwonsun/caslogin_h5.jsp"):
+            return False
+    return True
+
+
+class BrowserFlow:
+    def __init__(self, store, settings, log, stop: threading.Event, scheduled=False):
+        self.store, self.settings, self.log, self.stop = store, settings, log, stop
+        self.scheduled = scheduled
+        self.day = self.now().date().isoformat()
+        self.batch = None
+        self.query_seen = False
+        self.query_ok = False
+        self.submitted_response = False
+        self.logged_in = False
+        self.context = None
+        self.menu_seen = self.menu_ok = False
+        self.menu_entry = None
+
+    def now(self):
+        return now_cn()
+
+    def check_cancel(self):
+        if self.stop.is_set():
+            raise Cancelled()
+
+    def pause(self, page, seconds=0.3):
+        self.check_cancel()
+        page.wait_for_timeout(int(seconds * 1000))
+
+    def observe(self, response):
+        # Only inspect these two application responses; no headers, passwords or tokens are logged.
+        parts = urlsplit(response.url)
+        if parts.hostname != "zhxg.csu.edu.cn":
+            return
+        path = parts.path
+        if path.endswith(MENU_SUFFIX):
+            self.menu_seen, self.menu_ok = True, response.ok
+            try:
+                payload = response.json()
+                self.menu_entry = find_punch_menu(payload)
+                if isinstance(payload, dict) and (payload.get("success") is False or
+                        ("code" in payload and str(payload["code"]) not in ("200", "0"))):
+                    self.menu_ok = False
+            except Exception:
+                self.menu_ok = False
+        elif path.endswith(QUERY_SUFFIX):
+            self.query_seen, self.query_ok = True, response.ok
+            try:
+                payload = response.json()
+                self.batch = server_batch(payload)
+                if isinstance(payload, dict) and (payload.get("success") is False or
+                        ("code" in payload and str(payload["code"]) not in ("200", "0"))):
+                    self.query_ok = False
+            except Exception:
+                self.batch = None  # App may unwrap an encrypted response before building the URL.
+        elif path.endswith(SUBMIT_SUFFIX):
+            self.submitted_response = True
+
+    @staticmethod
+    def visible(locator):
+        for item in locator.all()[:15]:
+            if item.is_visible():
+                return item
+        return None
+
+    def login(self, page):
+        if not safe_login_url(page.url):
+            raise AppError("unsafe_login", "登录地址与学校统一认证地址不一致，未填写账户密码。", True)
+        credentials = self.store.credentials()
+        if not credentials:
+            raise AppError("credentials", "请先在程序中保存校园账户和密码。", True)
+        self.log("需要统一认证，正在使用本机保存的账户登录。")
+        # These selectors were verified against the current CSU CAS login page.
+        username = page.locator("#pwdFromId #username")
+        for _ in range(25):
+            if self.visible(username):
+                break
+            tab = self.visible(page.locator("#userNameLogin_a"))
+            if tab:
+                tab.click()
+                break
+            self.pause(page)
+        user_input = self.visible(username)
+        password = self.visible(page.locator("#pwdFromId #password"))
+        if not user_input or not password:
+            raise AppError("login_changed", "未找到学校账号登录表单，请在浏览器完成登录后重试。", True)
+        # Check again immediately before sending credentials, after any asynchronous navigation.
+        if not safe_login_url(page.url):
+            raise AppError("unsafe_login", "登录页面已变化，已停止填写。", True)
+        user_input.fill(credentials["username"])
+        password.click()  # The school's normal focus handler removes its readonly attribute.
+        password.fill(credentials["password"])
+        password.press("Tab")
+        self.pause(page, 1.0)  # Allow the username captcha check triggered by blur to finish.
+        captcha = self.visible(page.locator("#pwdFromId input[name='captcha']"))
+        manual_notified = False
+        if captcha:
+            self.log("需要验证码：账户密码已填入，请在浏览器填写验证码并点击登录。", "attention")
+            manual_notified = True
+        else:
+            button = self.visible(page.locator("#pwdFromId #login_submit"))
+            if not button:
+                raise AppError("login_changed", "未找到登录按钮，请在浏览器完成登录。", True)
+            button.click()
+        # Exactly one automatic login submission per run. Password rejection pauses scheduling.
+        deadline = time.monotonic() + self.settings.manual_wait_seconds
+        while time.monotonic() < deadline:
+            self.check_cancel()
+            host = urlsplit(page.url).hostname
+            if host == "zhxg.csu.edu.cn":
+                self.logged_in = True
+                self.log("统一认证已返回学工系统。")
+                return
+            if host != "ca.csu.edu.cn":
+                raise AppError("unexpected_page", "登录跳到了其他站点，请人工检查浏览器。", True)
+            text = page.locator("body").inner_text(timeout=5000)
+            if any(word in text for word in ("用户名或密码错误", "用户名或密码有误", "密码错误",
+                                             "用户不存在", "账号已锁定", "账户已锁定", "账号被冻结")):
+                raise AppError("credentials", "学校拒绝了登录信息；请检查账户密码，本次未能登录。", True)
+            if not manual_notified and (self.visible(page.locator("#pwdFromId input[name='captcha']"))
+                                        or "二次认证" in text or "短信验证码" in text):
+                self.log("登录需要人工验证，请在浏览器完成验证码或二次认证。", "attention")
+                manual_notified = True
+            self.pause(page, 0.5)
+        raise AppError("manual_login", "等待人工登录超时；浏览器将关闭，请检查配置后再运行。", True)
+
+    def navigate_app(self, page, target_url, ready):
+        page.goto(target_url, wait_until="domcontentloaded", timeout=45000)
+        deadline = time.monotonic() + 90
+        tried_login = False
+        redirected_to_target = False
+        expected = route_key(target_url)
+        while time.monotonic() < deadline:
+            self.check_cancel()
+            parts = urlsplit(page.url)
+            if parts.hostname == "ca.csu.edu.cn":
+                if tried_login:
+                    raise AppError("login_loop", "登录后再次要求认证，请检查账户或在浏览器验证。", True)
+                self.login(page)
+                tried_login = True
+                deadline = time.monotonic() + 90
+                continue
+            if parts.hostname != "zhxg.csu.edu.cn":
+                raise AppError("unexpected_page", "打开了非预期站点，已停止自动操作。", True)
+            if "/pages/login/" in parts.fragment or "/fdcwonsun/" in parts.path:
+                # Do not interrupt the callback while it exchanges credentials and loads roles.
+                self.pause(page, 0.5)
+                continue
+            if route_key(page.url) != expected:
+                if not redirected_to_target and not parts.query:
+                    page.goto(target_url, wait_until="domcontentloaded", timeout=45000)
+                    redirected_to_target = True
+                    continue
+            elif ready():
+                self.logged_in = True
+                return
+            self.pause(page)
+        raise AppError("status_unavailable", "网页数据加载超时，请检查登录或网络后重新运行仅检查。", True)
+
+    def open_punch(self, page):
+        # Read the exact data shown in DevTools Network; no text/OCR or fixed punch route.
+        self.log("打开服务大厅，读取最新功能菜单。")
+        self.menu_seen = self.menu_ok = False
+        self.menu_entry = None
+        self.navigate_app(page, SERVICE_URL, lambda: self.menu_seen and self.menu_ok)
+        if self.menu_entry is None:
+            raise AppError("menu_missing", "当前服务大厅菜单没有平安打卡，请检查账户角色或学校菜单配置。", True)
+        try:
+            entry_url = resolve_menu_url(self.menu_entry["url"], page.url)
+        except ValueError as error:
+            raise AppError("menu_url", str(error), True) from None
+        self.log("已从大厅菜单获取平安打卡的当前入口，正在进入。")
+        self.batch = None
+        self.query_seen = self.query_ok = False
+        self.navigate_app(page, entry_url, lambda: self.query_seen and self.query_ok)
+        status = (PunchStatus.from_batch(self.batch) if self.batch is not None
+                  else PunchStatus.from_fresh_url(page.url, route_key(entry_url)))
+        if not status or not status.shift:
+            raise AppError("status_unavailable", "打卡页面未返回当天班次，请检查登录或网络后重新运行仅检查。", True)
+        self.log(f"当前班次：{status.shift}；开放时间：{status.window or '未返回'}。")
+        return status
+
+    def location(self, page):
+        manual = self.settings.location_mode == "manual"
+        self.log("等待网页读取手动定位。" if manual else "等待网页获取电脑的真实定位。")
+        deadline = time.monotonic() + 60
+        refreshed = False
+        while time.monotonic() < deadline:
+            self.check_cancel()
+            value = page.evaluate(LOCATION_STATE_JS)
+            if value and value.get('unavailable'):
+                raise AppError('unavailable', '学校页面当前暂不可打卡，未提交；请在开放时段再次检查页面定位。')
+            if valid_location(value) and not value.get("locating"):
+                if value.get("canPunch") is False:
+                    raise AppError("outside_range", "学校页面判断当前定位不符合考勤范围，未提交。", True)
+                self.log(("手动定位已由网页读取" if manual else "电脑定位已取得") + ("，地址已解析。" if value.get("name") else "，地址将由网页继续解析。"))
+                return
+            if not refreshed and time.monotonic() > deadline - 25:
+                tab = self.visible(page.get_by_text("打卡", exact=True))
+                if tab:
+                    tab.click()  # Uses the page's own normal refresh-location handler.
+                refreshed = True
+            self.pause(page, 0.5)
+        message = ("网页未能读取手动定位，请检查坐标格式与学校页面的定位提示，未提交打卡。" if manual else
+                   "无法取得电脑定位。请检查 Windows 和 Edge 定位权限，未提交打卡。")
+        raise AppError("location", message, True)
+
+    def configure_location(self, context):
+        if self.settings.location_mode == "manual":
+            try:
+                location = self.store.manual_location()
+            except Exception:
+                raise AppError("location_config", "手动坐标无法读取，请在定位设置中重新填写并保存。", True) from None
+            if location is None:
+                raise AppError("location_config", "请先在定位设置中保存纬度和经度。", True)
+            context.set_geolocation(location.geolocation())
+            context.add_init_script(script=MANUAL_LOCATION_INIT_JS)
+            self.log("本次使用本机保存的手动 GPS 坐标，学校页面将继续解析地址并检查考勤范围。")
+        context.grant_permissions(["geolocation"], origin=SCHOOL_ORIGIN)
+
+    def verify(self, context, old_status):
+        # A new page and bare route discard old component state and success query parameters.
+        for previous in context.pages:
+            previous.remove_listener('response', self.observe)
+        page = context.new_page()
+        page.on("response", self.observe)
+        status = self.open_punch(page)
+        if (status.shift == old_status.shift and status.record_is_today(self.now())
+                and self.now().date().isoformat() == self.day):
+            stamp = status.record_time[-8:-3] if len(status.record_time) >= 16 else ""
+            self.log("已重新查询服务端：当天打卡记录已确认。")
+            return RunResult("success", "打卡成功，已重新查询确认。" + (f" 记录时间 {stamp}" if stamp else ""), True)
+        raise AppError("unconfirmed", "提交后尚未查到当天成功记录；下一次重试会先查状态，避免重复提交。")
+
+    def perform(self, context, dry_run):
+        self.configure_location(context)
+        page = context.new_page()
+        page.set_default_timeout(10000)
+        page.on("response", self.observe)
+        status = self.open_punch(page)
+        if dry_run:
+            if not status.within_school_window(self.now()) or not status.allowed:
+                self.check_native_location(page)
+                return RunResult('checked', '登录、班次查询和浏览器定位检查通过。学校当前不允许打卡，页面定位与范围判断需在开放时段再次检查；本次未提交。')
+            if not status.punched and not status.exempt:
+                self.location(page)
+            else:
+                self.log("今日已打卡或免打卡，正在单独检查浏览器定位配置。")
+                self.check_native_location(page)
+            return RunResult("checked", "登录、班次与定位检查通过。本次未提交打卡。")
+        if status.record_is_today(self.now()):
+            return RunResult("already_done", "服务端显示今天已经打卡，已跳过。", True)
+        if status.punched:
+            raise AppError("stale_status", "服务端记录日期与今天不一致，未提交，请人工检查。", True)
+        if status.exempt:
+            return RunResult("exempt", "学校显示今日无需打卡，已跳过。", True)
+        if not status.allowed:
+            raise AppError("unavailable", "学校当前不允许打卡，将在重试时重新检查。")
+        if not status.within_school_window(self.now()):
+            raise AppError("outside_time", "当前不在学校返回的打卡时段内，等待下次检查。")
+        self.location(page)
+        self.check_cancel()
+        at = self.now()
+        if at.date().isoformat() != self.day:
+            raise AppError("day_changed", "等待过程中日期发生变化，本次未提交。")
+        if not status.within_school_window(at) or (self.scheduled and not self.settings.in_window(at)):
+            raise AppError("outside_time", "等待定位或登录后已超过允许时间，本次未提交。")
+        button = self.visible(page.get_by_text("立即打卡", exact=True))
+        if not button:
+            raise AppError("button_changed", "未找到可用的立即打卡按钮，已停止自动提交。", True)
+        self.log("定位和时段检查通过，正在点击立即打卡。")
+        self.submitted_response = False
+        self.check_cancel()
+        button.click()
+        deadline = time.monotonic() + 25
+        while time.monotonic() < deadline and not self.submitted_response:
+            self.pause(page)
+        if not self.submitted_response:
+            self.log("未观察到提交响应，正在重新查询当天状态。")
+        return self.verify(context, status)
+
+    def check_native_location(self, page):
+        location = page.evaluate(NATIVE_LOCATION_JS)
+        if not isinstance(location, dict) or not location.get('ok') or not valid_location(location):
+            raise AppError('location', '登录与班次查询通过，但浏览器定位不可用；尚未验证自动打卡。', True)
+        self.log('浏览器已读取手动定位。' if self.settings.location_mode == 'manual' else '浏览器已取得电脑真实定位。')

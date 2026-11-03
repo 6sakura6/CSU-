@@ -1,0 +1,26 @@
+[
+  {
+    "path": "dist/1.2.0/平安打卡助手/平安打卡助手.exe",
+    "embedded_version": "1.2.0"
+  },
+  {
+    "path": "dist/1.2.1/平安打卡助手/平安打卡助手.exe",
+    "embedded_version": "1.2.1"
+  },
+  {
+    "path": "dist/1.2.1-hotfix/平安打卡助手.exe",
+    "embedded_version": "1.2.1"
+  },
+  {
+    "path": "dist/中间构建/release-v1.2.0/平安打卡助手/平安打卡助手.exe",
+    "embedded_version": "1.2.0"
+  },
+  {
+    "path": "dist/中间构建/release-v1.2.0-final/平安打卡助手/平安打卡助手.exe",
+    "embedded_version": "1.2.0"
+  },
+  {
+    "path": "dist/中间构建/release-v1.2.0-verified/平安打卡助手/平安打卡助手.exe",
+    "embedded_version": "1.2.0"
+  }
+]

@@ -1,0 +1,86 @@
+[
+  {
+    "tag": "v1.0.1",
+    "commit": "af5bb48365674e0b562ad04f65df6e08a7bebfd2",
+    "source_path": "1.0\\源码历史\\v1.0.1",
+    "public_files": 12
+  },
+  {
+    "tag": "v1.0.2",
+    "commit": "d2dd8c88f051b5de6e15907c55eeab55c8e7a3b4",
+    "source_path": "1.0\\源码历史\\v1.0.2",
+    "public_files": 12
+  },
+  {
+    "tag": "v1.0.3",
+    "commit": "c5facdd2a4d4513f3d18390d788ae70d015f1794",
+    "source_path": "1.0\\源码历史\\v1.0.3",
+    "public_files": 12
+  },
+  {
+    "tag": "v1.0.4",
+    "commit": "67d1ac94a24bc6c6cfc7fc5b4758151b5f7feb9b",
+    "source_path": "1.0\\源码历史\\v1.0.4",
+    "public_files": 13
+  },
+  {
+    "tag": "v1.0.5",
+    "commit": "09d8940f7571c3e862e8fa9807824e89212bca2d",
+    "source_path": "1.0\\源码历史\\v1.0.5",
+    "public_files": 15
+  },
+  {
+    "tag": "v1.0.6",
+    "commit": "c3dd52c6c8efeece8714b05234fed50a919f55af",
+    "source_path": "1.0\\源码历史\\v1.0.6",
+    "public_files": 17
+  },
+  {
+    "tag": "v1.0.7",
+    "commit": "4c2be6e2fdd4dff9c41ca9447dc3a606192e11dc",
+    "source_path": "1.0\\源码历史\\v1.0.7",
+    "public_files": 19
+  },
+  {
+    "tag": "v1.0.8",
+    "commit": "e67f60aaa3eb27fa57c1126e06d0b86d75003719",
+    "source_path": "1.0\\源码历史\\v1.0.8",
+    "public_files": 19
+  },
+  {
+    "tag": "v1.0.9",
+    "commit": "43460be809442c9722df842a5333da986f81b06a",
+    "source_path": "1.0\\源码历史\\v1.0.9",
+    "public_files": 20
+  },
+  {
+    "tag": "v1.0.10",
+    "commit": "ab9e76c3861401229ae3b818b4f7ddab492d2f30",
+    "source_path": "1.0\\源码历史\\v1.0.10",
+    "public_files": 20
+  },
+  {
+    "tag": "v1.0.11",
+    "commit": "33948f1c40599695e203e1b3e77322e00c136ba0",
+    "source_path": "1.0\\源码历史\\v1.0.11",
+    "public_files": 24
+  },
+  {
+    "tag": "v1.0.12",
+    "commit": "c597198c22ec35dcabb621e40a8b63bfbdc21160",
+    "source_path": "1.0\\源码历史\\v1.0.12",
+    "public_files": 24
+  },
+  {
+    "tag": "v1.0.13",
+    "commit": "eec38d31744a27c789ed774c46cf843b6c4f805f",
+    "source_path": "1.0\\源码历史\\v1.0.13",
+    "public_files": 24
+  },
+  {
+    "tag": "v1.0.14",
+    "commit": "a88a3c47a9484fc23973a293cc388d82244fc6f4",
+    "source_path": "1.0",
+    "public_files": 24
+  }
+]

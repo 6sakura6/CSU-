@@ -1,0 +1,12 @@
+{
+  "current": {
+    "tag": "v1.1.1",
+    "commit": "70aae7aacc640fb63815aea1270ae3e25d0a5102",
+    "source_path": "1.1",
+    "public_files": 66
+  },
+  "v1.1.0": {
+    "source_snapshot_available": false,
+    "note": "保留原程序和安装包；当前源码为 v1.1.1，未冒充 1.1.0 原始快照。"
+  }
+}

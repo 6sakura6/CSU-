@@ -114,6 +114,7 @@ def run(args):
             return False
         if not coordinator.quitting and native.hide():
             return False
+    window.events.before_show += native.center_on_screen
     window.events.loaded += loaded
     window.events.closing += closing
 

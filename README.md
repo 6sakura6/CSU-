@@ -1,16 +1,16 @@
 # 平安校园打卡 · 版本目录
 
-程序、发布包和源码按 1.0、1.1、1.2 三个系列独立保存。日常开发使用 `1.2/source`，当前轻量版为 **1.2.2**（圆角外边框修复）。
+程序、发布包和源码按 1.0、1.1、1.2 三个系列独立保存。日常开发使用 `1.2/source`，当前轻量版为 **1.2.3**（启动窗口居中修复）。
 
 | 系列 | 主源码版本与入口 | 程序与安装包 | 版本说明 |
 | --- | --- | --- | --- |
 | [1.0](1.0/) | Git `v1.0.14`：[source/app.py](1.0/source/app.py)；1.0.1–1.0.13 原始源码保存在 `源码历史` | `1.0/dist`、`1.0/发布包`，原根目录已安装程序保存在 `1.0/已安装程序/1.0.14` | [1.0 说明](1.0/版本说明.md) |
 | [1.1](1.1/) | Git `v1.1.1`：[source/app.py](1.1/source/app.py) | `1.1/dist` 保留 1.1.0、1.1.1 及正式发布构建，`1.1/发布包` 保存 ZIP | [1.1 说明](1.1/版本说明.md) |
-| [1.2](1.2/) | 当前完整工作源码 `1.2.2`：[source/lite_app.py](1.2/source/lite_app.py) | `1.2/dist` 保留 1.2.0、1.2.1、修复版、验证版及中间构建；ZIP 位于 `1.2/发布包` | [1.2 说明](1.2/版本说明.md) |
+| [1.2](1.2/) | 当前完整工作源码 `1.2.3`：[source/lite_app.py](1.2/source/lite_app.py) | `1.2/dist` 保留各版程序；ZIP 位于 `1.2/发布包` | [1.2 说明](1.2/版本说明.md) |
 
-下载：[1.2.2 完整程序包](https://github.com/6sakura6/CSU-/releases/download/v1.2.2/CSU-Peace-Checkin-Windows-v1.2.2.zip) · [1.2.1 专用修复包](https://github.com/6sakura6/CSU-/releases/download/v1.2.2/CSU-Peace-Checkin-Windows-v1.2.2-hotfix.zip) · [发布说明](https://github.com/6sakura6/CSU-/releases/tag/v1.2.2)。修复包用于替换旧目录同名 EXE，需保留完整共享运行文件。
+下载：[1.2.3 完整程序包](https://github.com/6sakura6/CSU-/releases/download/v1.2.3/CSU-Peace-Checkin-Windows-v1.2.3.zip) · [发布说明](https://github.com/6sakura6/CSU-/releases/tag/v1.2.3)。
 
-本地最新程序位于 `1.2/dist/1.2.2/平安打卡助手/平安打卡助手.exe`。程序、安装包及个人数据不提交到 Git；下载程序请使用上方 Release 链接。
+本地最新程序位于 `1.2/dist/release-v1.2.3/平安打卡助手/平安打卡助手.exe`。程序、安装包及个人数据不提交到 Git；下载程序请使用上方 Release 链接。
 
 首次从 GitHub 下载源码后，进入 1.2 目录创建独立环境：
 

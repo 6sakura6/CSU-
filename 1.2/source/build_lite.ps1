@@ -1,4 +1,4 @@
-param([string]$Python = '', [string]$OutputDirectory = 'dist/release-v1.2.2')
+param([string]$Python = '', [string]$OutputDirectory = 'dist/release-v1.2.3')
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $outputRoot = [IO.Path]::GetFullPath((Join-Path $projectRoot $OutputDirectory))

@@ -20,6 +20,23 @@ class NativeWindow:
         else:
             function()
 
+    def center_on_screen(self):
+        """Fit and center the native window before its first display."""
+        def center():
+            from System.Drawing import Point, Size
+            from System.Windows.Forms import FormStartPosition, FormWindowState, Screen
+            form = self.window.native
+            if form.WindowState != FormWindowState.Normal:
+                return
+            area = Screen.FromHandle(form.Handle).WorkingArea
+            form.StartPosition = FormStartPosition.Manual
+            form.MinimumSize = Size(min(form.MinimumSize.Width, area.Width),
+                                    min(form.MinimumSize.Height, area.Height))
+            form.Size = Size(min(form.Width, area.Width), min(form.Height, area.Height))
+            form.Location = Point(area.Left + (area.Width - form.Width) // 2,
+                                  area.Top + (area.Height - form.Height) // 2)
+        self.invoke(center)
+
     def attach(self):
         def setup():
             import ctypes

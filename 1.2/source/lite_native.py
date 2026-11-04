@@ -11,6 +11,7 @@ class NativeWindow:
         self.running = None
         self.native_hooks = []
         self.resize_grips = []
+        self.page_visible = None
 
     def invoke(self, function):
         from System import Action
@@ -84,6 +85,9 @@ class NativeWindow:
                     raise ctypes.WinError(ctypes.get_last_error())
                 self.resize_grips.append((edge,grip))
             self.window.native.SizeChanged += self._resize
+            self.window.native.SizeChanged += self._sync_visibility
+            self.window.native.VisibleChanged += self._sync_visibility
+            self._sync_visibility()
             self._resize()
             menu = ContextMenuStrip()
             show = menu.Items.Add('显示主窗口')
@@ -100,6 +104,21 @@ class NativeWindow:
             self.tray.DoubleClick += lambda *_: self.show()
             self.tray.Visible = True
         self.invoke(setup)
+
+    def _sync_visibility(self, *_):
+        """Stop hidden WebView rendering; the Python scheduler stays independent."""
+        from System.Windows.Forms import FormWindowState
+        form = self.window.native
+        if form.IsDisposed or form.Disposing or form.webview.IsDisposed:
+            return
+        visible = bool(form.Visible and form.WindowState != FormWindowState.Minimized)
+        if visible == self.page_visible:
+            return
+        self.page_visible = visible
+        form.webview.Visible = visible
+        value = 'true' if visible else 'false'
+        form.webview.CoreWebView2.ExecuteScriptAsync(
+            'window.liteSetVisible && window.liteSetVisible(' + value + ')')
 
     def _resize(self, *_):
         from System.Drawing import Region

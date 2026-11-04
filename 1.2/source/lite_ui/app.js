@@ -1,6 +1,15 @@
 (() => {
  const $=s=>document.querySelector(s), api=()=>window.pywebview.api;
  let state={}, panel=null, loading=false, refreshing=false, lastLogs='', toastTimer, consentShown=false;
+ let nativeVisible=true, refreshTimer=null, ready=false;
+ function syncVisibility(){
+  const visible=nativeVisible&&!document.hidden;
+  document.documentElement.classList.toggle('ui-hidden',!visible);
+  clearInterval(refreshTimer);refreshTimer=null;
+  if(visible&&ready){refresh().catch(()=>{});refreshTimer=setInterval(()=>refresh().catch(()=>{}),500);}
+ }
+ window.liteSetVisible=visible=>{nativeVisible=visible;syncVisibility();};
+ document.addEventListener('visibilitychange',syncVisibility);
  function toast(message){$('#toast').textContent=message;$('#toast').classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').classList.remove('visible'),3000);}
  function rows(records,target){const nodes=records.map(record=>{const row=document.createElement('div');row.className='log-row '+(record.level==='attention'?'attention':'');const time=document.createElement('time');time.textContent=record.time;const text=document.createElement('span');text.textContent=(state.preview?'预览：':'')+record.message;row.append(time,text);return row;});target.replaceChildren(...nodes);}
  async function refresh(){if(refreshing)return;refreshing=true;try{const value=await api().state();if(value.ok===false){toast(value.message);return;}state=value;$('#version').textContent=state.version;$('#size-info').textContent=state.size_mb?`完整程序目录实测 ${Number(state.size_mb).toFixed(1)} MB。系统共享运行库与运行数据另计。`:'';
@@ -54,6 +63,6 @@
   $('#import').onclick=async()=>{try{const result=await call('choose_import');if(!result.cancelled){$('#import-summary').textContent=`已找到 ${result.files} 个配置文件。`;$('#import-error').textContent='';$('#import-dialog').showModal();}}catch(error){toast(error.message);}};
   $('#import-dialog').addEventListener('close',()=>call('close_panel','import').then(refresh).catch(()=>{}));
   $('#confirm-import').onclick=async()=>{try{const result=await call('confirm_import');$('#import-dialog').close();toast(result.message);await refresh();}catch(error){$('#import-error').textContent=error.message;}};
-  await refresh();window.liteReady=true;setInterval(()=>refresh().catch(()=>{}),500);
+  await refresh();window.liteReady=true;ready=true;syncVisibility();
  });
 })();

@@ -1,4 +1,4 @@
-param([string]$Python = '', [string]$OutputDirectory = 'dist/release-v1.2.3')
+param([string]$Python = '', [string]$OutputDirectory = 'dist/release-v1.2.4')
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $outputRoot = [IO.Path]::GetFullPath((Join-Path $projectRoot $OutputDirectory))
@@ -22,8 +22,13 @@ $arguments = @('-m','PyInstaller','--noconfirm','--clean','--windowed','--onedir
     '--name','平安打卡助手','--distpath',$outputRoot,'--workpath',$buildRoot,'--specpath',$buildRoot,
     '--paths',$PSScriptRoot,'--icon',(Join-Path $PSScriptRoot 'assets/app.ico'),
     '--add-data',"$(Join-Path $PSScriptRoot 'lite_ui');lite_ui",
-    '--add-data',"$(Join-Path $PSScriptRoot 'assets/app.ico');lite-assets/assets",
-    '--add-data',"$(Join-Path $PSScriptRoot 'ui/assets');lite-assets/ui/assets")
+    '--add-data',"$(Join-Path $PSScriptRoot 'assets/app.ico');lite-assets/assets")
+# The lightweight UI draws its background in CSS; retain the PNG for the legacy UI only.
+foreach ($asset in Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'ui/assets') -File) {
+    if ($asset.Extension -eq '.svg' -or $asset.Name -eq 'Fluent-Icons-LICENSE.txt') {
+        $arguments += @('--add-data',"$($asset.FullName);lite-assets/ui/assets")
+    }
+}
 foreach ($module in @('PySide6','PyQt5','PyQt6','qtpy','playwright','numpy','PIL','tkinter',
     'cefpython3','webview.platforms.qt','webview.platforms.cef','webview.platforms.mshtml',
     'webview.platforms.gtk','webview.platforms.cocoa','gi','Cocoa','objc','wx')) {

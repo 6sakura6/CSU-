@@ -14,7 +14,7 @@ from storage import Store,app_dir
 from service import CheckinService, DISCLAIMER_TEXT, STARTUP_CONSENT
 from startup import StartupRegistration, startup_is_authorized
 
-VERSION = '1.2.3'
+VERSION = '1.2.4'
 PANELS = ('account', 'schedule', 'location', 'network', 'startup', 'import')
 
 

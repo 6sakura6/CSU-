@@ -1,8 +1,8 @@
 {
   "current": {
-    "version": "1.2.3",
+    "version": "1.2.4",
     "source_path": "source",
-    "origin": "1.2 分支上的启动窗口居中修复工作源码。"
+    "origin": "1.2 分支上的轻量动态背景及启动窗口居中修复工作源码。"
   },
   "v1.2.0": {
     "source_snapshot_available": false,

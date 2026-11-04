@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import ctypes
 import json
 import os
@@ -45,8 +44,6 @@ def render_html():
     text = (HERE/'lite_ui/index.html').read_text('utf-8')
     text = text.replace('/* INLINE_CSS */', (HERE/'lite_ui/style.css').read_text('utf-8'))
     text = text.replace('/* INLINE_JS */', (HERE/'lite_ui/app.js').read_text('utf-8'))
-    text = text.replace('__BACKGROUND__', 'data:image/png;base64,' + base64.b64encode(
-        (ASSETS/'ui/assets/background.png').read_bytes()).decode())
     def icon(match):
         svg = (ASSETS/'ui/assets'/(match[1]+'.svg')).read_text('utf-8').replace('fill="#212121"', 'fill="currentColor"')
         return re.sub(r'<svg\b', '<svg aria-hidden="true"', svg, count=1)

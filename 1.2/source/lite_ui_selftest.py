@@ -146,7 +146,7 @@ def run_ui_selftest(window, coordinator, capture=None):
     checks['tray_hide'] = not window.native.Visible
     native.show()
     checks['tray_restore'] = bool(window.native.Visible)
-    checks['glass_blur'] = 'blur(' in window.evaluate_js('getComputedStyle(document.querySelector(".glass")).backdropFilter')
+    checks['glass_without_live_blur'] = window.evaluate_js('getComputedStyle(document.querySelector(".glass")).backdropFilter==="none"')
     if capture:
         native.capture(capture)
     return {'passed': all(checks.values()), 'checks':checks, 'native':native.info(),
